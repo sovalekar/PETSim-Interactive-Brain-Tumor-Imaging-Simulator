@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "petsim"
+version = "0.1.0"
+description = "Interactive PET brain-tumor imaging workstation (visualization scaffold)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PETSim Contributors" }]
+dependencies = [
+    "PySide6>=6.6.0",
+    "numpy>=1.26.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.scripts]
+petsim = "petsim.app:main"
+
+[tool.setuptools.packages.find]
+include = ["petsim*"]
