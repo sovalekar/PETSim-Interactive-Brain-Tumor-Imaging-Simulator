@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "petsim"
+version = "0.1.0"
+description = "Interactive brain tumor PET imaging workstation shell (UI only; no physics yet)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "PETSim contributors" }]
+dependencies = [
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "PySide6>=6.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+petsim = "petsim.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["petsim*"]
+
+[tool.setuptools.package-data]
+petsim = ["py.typed"]
