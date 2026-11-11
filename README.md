@@ -1,10 +1,35 @@
 # PETSim — Interactive Brain Tumor Imaging Simulator
 
-Dark-themed desktop workstation scaffold for interactive PET brain-tumor **visualization**.  
+Educational desktop workstation for **computational simulation of brain-tumor PET imaging**.  
 Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**.
 
-> **Scope of this release:** adjustable synthetic brain phantom + tumor display, a 48-element circular detector ring, and a reserved reconstruction panel.  
-> **Not included yet:** PET physics, coincidence detection, projection/sinogram formation, or image reconstruction (and nothing is faked in their place).
+> **Not a clinical diagnostic tool.**
+
+---
+
+## Current stage: Stage 2 — Acquisition
+
+| Stage | Status | Contents |
+| --- | --- | --- |
+| **1** | Done | Dark three-panel UI, adjustable brain/tumor phantom, 48-crystal ring |
+| **2** | **This release** | Positron annihilation, 511 keV back-to-back photons, detector efficiency, coincidences, animated acquisition |
+| **3** | Not started | Sinograms / FBP / OSEM / ML-EM reconstruction (panel reserved, disabled) |
+
+### Stage 2 model (intentional simplifications)
+
+Positron annihilation:
+
+\[
+e^{+} + e^{-} \rightarrow 2\gamma \quad (511\,\mathrm{keV\ each})
+\]
+
+Coincidence detection probability with independent single-photon efficiency \(\varepsilon\):
+
+\[
+P(\mathrm{coincidence}) = \varepsilon^{2}
+\]
+
+**Assumptions for this stage:** ideal back-to-back emission, **no** tissue attenuation, **no** scattering, **no** positron range. Photon paths are computed from sampled annihilation sites to the circular detector ring.
 
 ---
 
@@ -12,9 +37,11 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 
 | Panel | Role |
 | --- | --- |
-| **Simulation Controls** | Sliders/toggles for brain size & intensity, tumor position/size/intensity, colormap, detector labels |
-| **Acquisition Geometry** | 48-crystal circular detector ring around a rasterized brain phantom (Matplotlib) |
-| **Reconstruction** | Reserved placeholder — controls disabled until a real reconstructor lands |
+| **Simulation Controls** | Brain/tumor parameters; Start / Pause / Reset acquisition; event count; detector efficiency; animation speed; optional seed; live stats |
+| **Acquisition Geometry** | 48-crystal ring + phantom; animated LORs (green = coincidence, red = miss); crystal illumination |
+| **Reconstruction** | **Unavailable (Stage 3)** — shows coincidence count only; no fake images |
+
+Changing brain or tumor parameters **resets** acquisition data so events from different uptake maps are never mixed.
 
 ---
 
@@ -22,52 +49,30 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 
 ```
 petsim/
-├── __init__.py
-├── __main__.py          # python -m petsim
-├── app.py               # QApplication bootstrap + dark theme
-├── main_window.py       # Three-panel workstation shell
-├── theme.py             # Dark clinical stylesheet + palette
-├── models/
-│   ├── phantom.py       # Synthetic brain + tumor raster (display only)
-│   └── detector.py      # 48-element ring geometry (display only)
-└── widgets/
-    ├── controls_panel.py
-    ├── detector_view.py
-    └── reconstruction_panel.py
-requirements.txt
-pyproject.toml
-README.md
+├── app.py / main_window.py / theme.py
+├── acquisition_controller.py   # QTimer loop (UI ↔ physics)
+├── models/                     # Phantom + detector geometry
+├── physics/                    # Stage 2 engine (Qt-free)
+│   ├── geometry.py             # Ray–ring intersection, crystal index
+│   ├── pet_engine.py           # Sampling, photons, coincidences
+│   └── acquisition.py          # Buffer + stats + config
+└── widgets/                    # Controls, detector view, recon placeholder
+tests/                          # Physics + offscreen UI tests
 ```
-
----
-
-## Requirements
-
-- Python **3.11** or newer (3.12 tested)
-- A display server for the GUI (native desktop, or X11/Wayland; see headless note below)
-- Dependencies listed in `requirements.txt` / `pyproject.toml`:
-  - `PySide6`
-  - `numpy`
-  - `matplotlib`
 
 ---
 
 ## Setup
 
 ```bash
-# Clone
 git clone <repo-url> PETSim-Interactive-Brain-Tumor-Imaging-Simulator
 cd PETSim-Interactive-Brain-Tumor-Imaging-Simulator
 
-# Recommended: virtual environment
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
-# Install dependencies
 pip install -r requirements.txt
-
-# Optional editable install (exposes the `petsim` console script)
-pip install -e .
+pip install -e ".[dev]"            # optional: pytest
 ```
 
 ---
@@ -78,44 +83,28 @@ pip install -e .
 python -m petsim
 ```
 
-Or, after an editable install:
+Or after an editable install:
 
 ```bash
 petsim
 ```
 
-### Headless / CI smoke check
-
-The GUI needs a display. For a quick import/widget construction check without opening a window:
+### Tests
 
 ```bash
-QT_QPA_PLATFORM=offscreen python -c "
-from PySide6.QtWidgets import QApplication
-import sys
-app = QApplication(sys.argv)
-from petsim.main_window import MainWindow
-w = MainWindow()
-print('ok', w.windowTitle())
-"
+pip install -e ".[dev]"
+QT_QPA_PLATFORM=offscreen pytest
 ```
 
 ---
 
-## Using the controls
+## Using Stage 2 acquisition
 
-1. **Brain phantom** — radius and background intensity; optional outline.
-2. **Tumor** — enable/disable, shift center (X/Y), change radius and hot-spot intensity.
-3. **Display** — activity colormap (`hot`, `inferno`, …); toggle crystal arcs and every-8th detector labels.
-4. **Reset defaults** — restore the starting phantom and display options.
-5. **Reconstruction panel** — intentionally inactive; reserved for a future FBP/OSEM module.
-
----
-
-## Design notes
-
-- Coordinates are normalized FOV units with the detector ring near radius `0.92` and the FOV circle at radius `1.0`.
-- The phantom is a simple elliptical brain silhouette plus a circular tumor; it is a **display raster**, not a physical activity distribution for forward projection.
-- Modules under `petsim/models/` are kept free of Qt so they can later feed a physics engine without UI coupling.
+1. Adjust **brain / tumor** uptake as desired.
+2. Set **Events** (1,000–20,000), **Det. efficiency** (20–100%), and **Anim. speed**.
+3. Optionally enable a **Random seed** for reproducible runs.
+4. Click **Start Acquisition**. Pause / Resume / Reset as needed.
+5. Watch LORs update in the center panel; compare the live coincidence rate to \(\varepsilon^{2}\).
 
 ---
 

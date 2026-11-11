@@ -1,6 +1,7 @@
-"""Circular PET detector-ring geometry (visualization only).
+"""Circular PET detector-ring geometry shared by display and Stage 2 physics.
 
-No coincidence pairing, sensitivity, or photon transport is modeled here.
+Crystal angles / positions define where annihilations map to detector indices.
+Photon transport and coincidence logic live in ``petsim.physics``.
 """
 
 from __future__ import annotations
