@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from petsim import __version__
 from petsim.acquisition_controller import AcquisitionController
+from petsim.analysis_worker import AnalysisRunner
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
 
         self.acquisition = AcquisitionController(self)
         self.recon_runner = ReconstructionRunner(self)
+        self.analysis_runner = AnalysisRunner(self)
 
         self._build_menu()
         self._build_body()
@@ -49,7 +51,7 @@ class MainWindow(QMainWindow):
         self.acquisition.apply_config(self.controls.acquisition_config())
         self._refresh_detector(state)
         self.statusBar().showMessage(
-            "Ready — Stage 3: acquire coincidences, then run FBP reconstruction."
+            "Ready — Stage 4: acquire, reconstruct, then run quantitative analysis."
         )
 
     def _build_menu(self) -> None:
@@ -94,7 +96,7 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 3)
         self.splitter.setStretchFactor(2, 3)
-        self.splitter.setSizes([300, 560, 480])
+        self.splitter.setSizes([300, 520, 520])
 
         outer.addWidget(self.splitter, stretch=1)
 
@@ -117,8 +119,18 @@ class MainWindow(QMainWindow):
 
         self.reconstruction.run_requested.connect(self._on_run_reconstruction)
         self.reconstruction.clear_requested.connect(self._on_clear_reconstruction)
+        self.reconstruction.analyze_requested.connect(self._on_run_analysis)
+        self.reconstruction.count_comparison_requested.connect(
+            self._on_run_count_comparison
+        )
+
         self.recon_runner.finished.connect(self._on_recon_finished)
         self.recon_runner.failed.connect(self._on_recon_failed)
+
+        self.analysis_runner.analysis_finished.connect(self._on_analysis_finished)
+        self.analysis_runner.analysis_failed.connect(self._on_analysis_failed)
+        self.analysis_runner.comparison_finished.connect(self._on_comparison_finished)
+        self.analysis_runner.comparison_failed.connect(self._on_analysis_failed)
 
     def _refresh_detector(self, state: PhantomState | None = None) -> None:
         state = state or self.controls.current_state()
@@ -137,7 +149,7 @@ class MainWindow(QMainWindow):
         self._refresh_detector(state)
         tumor = "on" if state.tumor_enabled else "off"
         self.statusBar().showMessage(
-            f"Phantom updated (acquisition + reconstruction cleared) · "
+            f"Phantom updated (acquisition + reconstruction + analysis cleared) · "
             f"brain r={state.brain_radius:.2f} · tumor {tumor}"
         )
 
@@ -148,7 +160,7 @@ class MainWindow(QMainWindow):
         self.acquisition.apply_config(config)
 
     def _on_start(self) -> None:
-        # New acquisition invalidates any previous reconstruction.
+        # New acquisition invalidates any previous reconstruction / analysis.
         self.reconstruction.invalidate("New acquisition started.")
         self.acquisition.apply_config(self.controls.acquisition_config())
         self.acquisition.start()
@@ -219,6 +231,54 @@ class MainWindow(QMainWindow):
         self.reconstruction.show_error(message)
         self.statusBar().showMessage(f"Reconstruction failed: {message}")
 
+    def _on_run_analysis(self) -> None:
+        result = self.reconstruction._result
+        if result is None or not result.has_data:
+            self.reconstruction.show_analysis_error(
+                "No reconstruction available for analysis."
+            )
+            return
+        phantom_state = self.acquisition.acquired_phantom_state
+        ok = self.analysis_runner.start_analysis(result, phantom_state)
+        if not ok:
+            self.reconstruction.show_analysis_error("Analysis already in progress.")
+            return
+        self.statusBar().showMessage("Running quantitative analysis…")
+
+    def _on_run_count_comparison(self) -> None:
+        hits_a, hits_b = self.acquisition.coincidence_endpoints()
+        if hits_a.shape[0] == 0:
+            self.reconstruction.show_analysis_error(
+                "No coincidence endpoints available for count comparison."
+            )
+            return
+        config = self.reconstruction.current_config()
+        phantom_state = self.acquisition.acquired_phantom_state
+        ok = self.analysis_runner.start_count_comparison(
+            hits_a, hits_b, config, phantom_state
+        )
+        if not ok:
+            self.reconstruction.show_analysis_error(
+                "Analysis already in progress."
+            )
+            return
+        self.statusBar().showMessage(
+            f"Comparing reconstruction quality across coincidence-count levels "
+            f"({hits_a.shape[0]:,} available)…"
+        )
+
+    def _on_analysis_finished(self, analysis) -> None:
+        self.reconstruction.show_analysis(analysis)
+        self.statusBar().showMessage(analysis.message)
+
+    def _on_comparison_finished(self, comparison) -> None:
+        self.reconstruction.show_count_comparison(comparison)
+        self.statusBar().showMessage(comparison.message)
+
+    def _on_analysis_failed(self, message: str) -> None:
+        self.reconstruction.show_analysis_error(message)
+        self.statusBar().showMessage(f"Analysis failed: {message}")
+
     def _on_clear_reconstruction(self) -> None:
         self.statusBar().showMessage("Reconstruction output cleared.")
 
@@ -226,10 +286,11 @@ class MainWindow(QMainWindow):
         """Stop timers/threads before the window is destroyed (macOS-safe)."""
         self.acquisition.reset()
         self.recon_runner.shutdown(timeout_ms=10_000)
+        self.analysis_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
     def _reset_splitter(self) -> None:
-        self.splitter.setSizes([300, 560, 480])
+        self.splitter.setSizes([300, 520, 520])
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
@@ -242,7 +303,8 @@ class MainWindow(QMainWindow):
                 "Educational PET brain-tumor imaging simulator.<br>"
                 "Built with PySide6, NumPy, and Matplotlib.<br><br>"
                 "<b>Stage 2:</b> annihilation, 511&nbsp;keV photons, coincidences.<br>"
-                "<b>Stage 3:</b> measured sinogram + filtered backprojection (FBP).<br><br>"
+                "<b>Stage 3:</b> measured sinogram + filtered backprojection (FBP).<br>"
+                "<b>Stage 4:</b> localization, contrast / TBR, count comparison.<br><br>"
                 "Idealized model: no attenuation, scatter, or positron range.<br>"
                 "Not a clinical diagnostic tool."
             ),
