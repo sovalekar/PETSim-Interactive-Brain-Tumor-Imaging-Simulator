@@ -124,7 +124,13 @@ pip install -e ".[dev]"
 QT_QPA_PLATFORM=offscreen python -m pytest -q
 ```
 
-Always set ``QT_QPA_PLATFORM=offscreen`` (especially on **macOS**). The suite uses a session-scoped ``QApplication`` in ``tests/conftest.py`` with ``quitOnLastWindowClosed=False`` and tears down windows/timers/QThreads after each GUI test to avoid Cocoa/Qt hard crashes at interpreter exit.
+**macOS note:** PySide6 frequently **native-aborts** with ``QT_QPA_PLATFORM=offscreen``.  
+``tests/conftest.py`` automatically remaps Darwin ``offscreen`` → ``minimal`` before Qt loads.  
+``MainWindow`` / Matplotlib QtAgg checks run in a **subprocess** so a plugin abort cannot kill the parent pytest process. You can also run explicitly:
+
+```bash
+QT_QPA_PLATFORM=minimal python -m pytest -q
+```
 
 Coverage includes LOR \(\leftrightarrow (\theta,s)\) conversion, sinogram binning, deterministic seeds, empty data, FBP shape/finiteness, an **analytic disk / point-source** projection test (independent of the PET geometry converter), tumor-location sensitivity, and UI state management.
 

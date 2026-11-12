@@ -14,8 +14,7 @@ from petsim.models.phantom import BrainPhantom, PhantomState
 from petsim.physics.acquisition import AcquisitionConfig
 from petsim.physics.pet_engine import PETEngine
 from petsim.reconstruction.pipeline import ReconstructionConfig, reconstruct_from_endpoints
-
-# ``qapp``, ``main_window``, and ``acquisition_controller`` come from conftest.py.
+from tests.qt_subprocess import run_qt_script
 
 
 def _endpoints_from_engine(state: PhantomState, seed: int, n: int = 8000):
@@ -105,46 +104,50 @@ def test_controller_endpoints_exclude_non_coincidences(qapp, acquisition_control
     assert ctrl.acquired_activity is not None
 
 
-def test_main_window_recon_state_management(qapp, main_window):
-    window = main_window
-    window.show()
-    qapp.processEvents()
-
-    # No data → run disabled
-    assert window.reconstruction._run_btn.isEnabled() is False
-
-    window.controls._n_events.setValue(1000)
-    window.controls._efficiency.setValue(100)
-    window.controls._speed.setCurrentText("Fast")
-    window.controls._use_seed.setChecked(True)
-    window.controls._seed_edit.setText("5")
-    qapp.processEvents()
-    window.controls.start_acquisition.emit()
-
-    deadline = time.time() + 5.0
-    while not window.acquisition.stats.finished and time.time() < deadline:
-        qapp.processEvents()
-        time.sleep(0.005)
-
-    assert window.acquisition.stats.coincidences > 0
-    assert window.reconstruction._run_btn.isEnabled() is True
-
-    # Run reconstruction (background thread)
-    window.reconstruction._on_run()
-    deadline = time.time() + 10.0
-    while window.recon_runner.busy and time.time() < deadline:
-        qapp.processEvents()
-        time.sleep(0.01)
-    # Ensure the worker thread has fully joined before assertions / teardown.
-    assert window.recon_runner.shutdown(timeout_ms=5000)
-    qapp.processEvents()
-
-    assert window.reconstruction._result is not None
-    assert window.reconstruction._result.image.shape == (128, 128)
-
-    # Phantom change clears acquisition + reconstruction
-    window.controls._tumor_x.setValue(30)
-    qapp.processEvents()
-    assert window.acquisition.stats.total_events == 0
-    assert window.reconstruction._result is None
-    assert window.reconstruction._run_btn.isEnabled() is False
+def test_main_window_recon_state_management():
+    """Stage 3 UI/state checks in a child process (macOS abort isolation)."""
+    script = r"""
+import time
+import sys
+from PySide6.QtWidgets import QApplication
+app = QApplication([sys.argv[0] if sys.argv else 'petsim-pytest'])
+app.setQuitOnLastWindowClosed(False)
+from petsim.main_window import MainWindow
+window = MainWindow()
+app.processEvents()
+assert window.reconstruction._run_btn.isEnabled() is False
+window.controls._n_events.setValue(1000)
+window.controls._efficiency.setValue(100)
+window.controls._speed.setCurrentText('Fast')
+window.controls._use_seed.setChecked(True)
+window.controls._seed_edit.setText('5')
+app.processEvents()
+window.controls.start_acquisition.emit()
+deadline = time.time() + 5.0
+while not window.acquisition.stats.finished and time.time() < deadline:
+    app.processEvents()
+    time.sleep(0.005)
+assert window.acquisition.stats.coincidences > 0
+assert window.reconstruction._run_btn.isEnabled() is True
+window.reconstruction._on_run()
+deadline = time.time() + 10.0
+while window.recon_runner.busy and time.time() < deadline:
+    app.processEvents()
+    time.sleep(0.01)
+assert window.recon_runner.shutdown(timeout_ms=5000)
+app.processEvents()
+assert window.reconstruction._result is not None
+assert window.reconstruction._result.image.shape == (128, 128)
+window.controls._tumor_x.setValue(30)
+app.processEvents()
+assert window.acquisition.stats.total_events == 0
+assert window.reconstruction._result is None
+assert window.reconstruction._run_btn.isEnabled() is False
+window.close()
+app.processEvents()
+"""
+    result = run_qt_script(script)
+    assert result.ok, (
+        f"GUI subprocess failed (code={result.returncode}).\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
