@@ -9,12 +9,14 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QSplitter,
     QStatusBar,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from petsim import __version__
 from petsim.acquisition_controller import AcquisitionController
+from petsim.experiment_worker import ExperimentRunner
 from petsim.analysis.pipeline import analyze_reconstruction
 from petsim.analysis_worker import AnalysisRunner
 from petsim.models.phantom import PhantomState
@@ -22,6 +24,7 @@ from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
 from petsim.reconstruction_worker import ReconstructionRunner
 from petsim.widgets.controls_panel import ControlsPanel
+from petsim.widgets.experiment_panel import ExperimentPanel
 from petsim.widgets.detector_view import DetectorView
 from petsim.widgets.reconstruction_panel import ReconstructionPanel
 
@@ -40,6 +43,7 @@ class MainWindow(QMainWindow):
         self.acquisition = AcquisitionController(self)
         self.recon_runner = ReconstructionRunner(self)
         self.analysis_runner = AnalysisRunner(self)
+        self.experiment_runner = ExperimentRunner(self)
 
         self._build_menu()
         self._build_body()
@@ -52,7 +56,7 @@ class MainWindow(QMainWindow):
         self.acquisition.apply_config(self.controls.acquisition_config())
         self._refresh_detector(state)
         self.statusBar().showMessage(
-            "Ready — Stage 5: acquire, then reconstruct with FBP or MLEM."
+            "Ready — Stage 6: reconstruct, or open Image Quality Experiments."
         )
 
     def _build_menu(self) -> None:
@@ -99,7 +103,16 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(2, 3)
         self.splitter.setSizes([300, 520, 520])
 
-        outer.addWidget(self.splitter, stretch=1)
+        workstation = QWidget()
+        station_layout = QVBoxLayout(workstation)
+        station_layout.setContentsMargins(0, 0, 0, 0)
+        station_layout.addWidget(self.splitter)
+
+        self.experiments = ExperimentPanel()
+        self.tabs = QTabWidget()
+        self.tabs.addTab(workstation, "Workstation")
+        self.tabs.addTab(self.experiments, "Image Quality Experiments")
+        outer.addWidget(self.tabs, stretch=1)
 
     def _build_status(self) -> None:
         status = QStatusBar()
@@ -136,6 +149,13 @@ class MainWindow(QMainWindow):
         self.analysis_runner.analysis_failed.connect(self._on_analysis_failed)
         self.analysis_runner.comparison_finished.connect(self._on_comparison_finished)
         self.analysis_runner.comparison_failed.connect(self._on_analysis_failed)
+
+        self.experiments.start_requested.connect(self._on_start_experiment)
+        self.experiments.cancel_requested.connect(self.experiment_runner.cancel)
+        self.experiments.reset_requested.connect(self.experiment_runner.invalidate_pending)
+        self.experiment_runner.progress.connect(self.experiments.show_progress)
+        self.experiment_runner.finished.connect(self._on_experiment_finished)
+        self.experiment_runner.failed.connect(self._on_experiment_failed)
 
     def _refresh_detector(self, state: PhantomState | None = None) -> None:
         state = state or self.controls.current_state()
@@ -344,6 +364,31 @@ class MainWindow(QMainWindow):
         self.reconstruction.show_analysis_error(message)
         self.statusBar().showMessage(f"Analysis failed: {message}")
 
+    def _on_start_experiment(self) -> None:
+        config = self.experiments.build_config(self.controls.current_state())
+        if config is None:
+            self.experiments.show_error("Select at least one method and one coincidence target.")
+            return
+        self.experiments.set_busy(True)
+        self.experiments.show_progress(0, 1, "Starting experiment…")
+        ok = self.experiment_runner.start(config)
+        if not ok:
+            self.experiments.show_error("An experiment is already running.")
+            return
+        self.statusBar().showMessage(
+            "Image-quality experiment running "
+            f"({', '.join(m.upper() for m in config.methods)}, "
+            f"{config.n_trials} trial(s))."
+        )
+
+    def _on_experiment_finished(self, result) -> None:
+        self.experiments.show_result(result)
+        self.statusBar().showMessage(result.message)
+
+    def _on_experiment_failed(self, message: str) -> None:
+        self.experiments.show_error(message)
+        self.statusBar().showMessage(f"Experiment failed: {message}")
+
     def _on_clear_reconstruction(self) -> None:
         self.recon_runner.invalidate_pending()
         self.statusBar().showMessage("Reconstruction output cleared.")
@@ -353,6 +398,7 @@ class MainWindow(QMainWindow):
         self.acquisition.reset()
         self.recon_runner.shutdown(timeout_ms=10_000)
         self.analysis_runner.shutdown(timeout_ms=10_000)
+        self.experiment_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
     def _reset_splitter(self) -> None:
@@ -371,7 +417,8 @@ class MainWindow(QMainWindow):
                 "<b>Stage 2:</b> annihilation, 511&nbsp;keV photons, coincidences.<br>"
                 "<b>Stage 3:</b> measured sinogram + filtered backprojection (FBP).<br>"
                 "<b>Stage 4:</b> localization, contrast / TBR, count comparison.<br>"
-                "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br><br>"
+                "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br>"
+                "<b>Stage 6:</b> repeated image-quality experiments.<br><br>"
                 "Idealized model: no attenuation, scatter, or positron range.<br>"
                 "Not a clinical diagnostic tool."
             ),

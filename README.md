@@ -15,7 +15,32 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **2** | Done | Annihilation sampling, 511 keV back-to-back photons, efficiency, coincidences, LOR animation |
 | **3** | Done | Measured sinogram from coincidences + filtered backprojection (FBP) |
 | **4** | Done | Tumor localization, TBR / contrast / background CV, coincidence-count comparison |
-| **5** | **This release (v0.5.0)** | MLEM iterative reconstruction, convergence, and FBP comparison |
+| **5** | Done | MLEM iterative reconstruction, convergence, and FBP comparison |
+| **6** | **This release (v0.6.0)** | Repeated image-quality experiments versus coincidence count |
+
+---
+
+## Stage 6 overview
+
+The **Image Quality Experiments** tab runs repeated acquisitions and reconstructions without using the tumor location as a reconstruction input.
+
+For each selected detected-coincidence target (default 1,000, 3,000, 5,000, 10,000, and 20,000) and each independent trial:
+
+1. Annihilations are simulated with the current phantom until that many coincidences are recorded.
+2. Exactly that prefix is reconstructed with FBP, MLEM, or both. A shared trial seed means both methods see the same coincidences.
+3. Stage 4 metrics are stored: localization error (FOV), tumor-to-background ratio, relative contrast, background coefficient of variation, runtime, and MLEM iteration count.
+
+The table and plots report the **mean and sample standard deviation across trials**. That spread is acquisition variability inside this simulator. It is not the MLEM convergence curve and it is not a clinical error bar. FBP still may pre-smooth the sinogram; MLEM uses unsmoothed counts. Neither method is assumed to win every metric.
+
+### Run an experiment
+
+1. Set the phantom on the Workstation tab.  
+2. Open **Image Quality Experiments**.  
+3. Choose methods, count levels, trials, seed, MLEM iterations, FBP filter, and detector efficiency.  
+4. Click **Start Experiment**. Cancel stops between steps and keeps finished trials. **Reset Results** clears the table and plots.  
+5. **Export CSV and PNG** writes `trials.csv`, `aggregates.csv`, and one PNG per plot. Comment lines in the CSV files record the seed, phantom, counts, filter, iterations, and the FBP/MLEM preprocessing difference.
+
+Example: seed `1`, both methods, 3 trials, counts 1,000 and 3,000, Hann filter, 10 MLEM iterations. Compare the error bars before treating a single run as typical.
 
 ---
 
@@ -162,6 +187,8 @@ petsim/
 ├── acquisition_controller.py
 ├── reconstruction_worker.py      # QThread FBP worker
 ├── analysis_worker.py            # QThread Stage 4 analysis worker
+├── experiment_worker.py          # QThread Stage 6 experiments
+├── experiments/                  # Acquisition repeats, metrics, CSV export
 ├── models/                       # Phantom + detector geometry
 ├── physics/                      # Stage 2 acquisition engine
 ├── reconstruction/               # Stage 3 FBP + Stage 5 MLEM (Qt-free)
@@ -258,6 +285,8 @@ coincidence-count comparison, analysis invalidation, and Stage 2–3 regression 
 - MLEM uses an unsmoothed sinogram; FBP may pre-smooth. Same coincidences, different preprocessing  
 - Extra MLEM iterations can fit noise; they do not guarantee better localization or contrast  
 - Default MLEM is 10 iterations on a 128×128 grid with the 96×128 sinogram  
+- Experiment error bars are across independent simulated acquisitions in this simplified model  
+- Large count levels with several MLEM trials take longer; cancel leaves completed trials in the table  
 
 ---
 
