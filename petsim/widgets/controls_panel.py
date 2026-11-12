@@ -68,9 +68,9 @@ class ControlsPanel(QFrame):
         root.addWidget(title)
 
         hint = QLabel(
-            "Adjust the synthetic brain phantom, then run a Stage-2 PET "
-            "acquisition (annihilations → 511 keV photon pairs → coincidences). "
-            "Image reconstruction is reserved for Stage 3."
+            "Adjust the synthetic brain phantom, run a PET acquisition "
+            "(annihilations → 511 keV coincidences), then reconstruct with FBP "
+            "in the right-hand panel."
         )
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
