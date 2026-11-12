@@ -49,8 +49,8 @@ def test_main_window_stays_responsive_during_acquisition():
     """MainWindow + Matplotlib QtAgg isolated from the pytest process.
 
     Exact prior crash surface on macOS: fixture setup constructing MainWindow
-    (FigureCanvasQTAgg) under QT_QPA_PLATFORM=offscreen → native abort of the
-    whole pytest interpreter.  Child uses ``minimal`` on Darwin.
+    (FigureCanvasQTAgg) under a bad QT_QPA_PLATFORM → native abort of the
+    whole pytest interpreter.  Child uses cocoa on Darwin / offscreen on Linux.
     """
     script = r"""
 import time

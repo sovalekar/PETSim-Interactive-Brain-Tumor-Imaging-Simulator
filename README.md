@@ -129,16 +129,19 @@ python -m petsim
 
 ```bash
 pip install -e ".[dev]"
+
+# Linux / CI (headless):
 QT_QPA_PLATFORM=offscreen python -m pytest -q
+
+# macOS (use cocoa — matches a working PETSim GUI):
+QT_QPA_PLATFORM=cocoa python -m pytest -q
 ```
 
-**macOS note:** PySide6 frequently **native-aborts** with ``QT_QPA_PLATFORM=offscreen``.  
-``tests/conftest.py`` automatically remaps Darwin ``offscreen`` → ``minimal`` before Qt loads.  
-``MainWindow`` / Matplotlib QtAgg checks run in a **subprocess** so a plugin abort cannot kill the parent pytest process. You can also run explicitly:
-
-```bash
-QT_QPA_PLATFORM=minimal python -m pytest -q
-```
+**macOS note:** ``offscreen`` and ``minimal`` are often broken with PySide6 even when
+plugin files exist on disk (abort / exit 134), while **``cocoa`` works** and is what
+the desktop app uses. ``tests/conftest.py`` therefore defaults Darwin to ``cocoa`` and
+remaps ``offscreen``/``minimal`` → ``cocoa`` (an explicit ``cocoa`` choice is preserved).
+``MainWindow`` checks still run in a subprocess so a plugin abort cannot kill parent pytest.
 
 Coverage includes LOR \(\leftrightarrow (\theta,s)\) conversion, sinogram binning, deterministic seeds, empty data, FBP shape/finiteness, an **analytic disk / point-source** projection test (independent of the PET geometry converter), tumor-location sensitivity, and UI state management.
 

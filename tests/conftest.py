@@ -1,22 +1,22 @@
-"""Pytest fixtures for PySide6 — macOS-safe Qt lifecycle.
+"""Pytest fixtures for PySide6 — platform-safe Qt lifecycle.
 
-Why macOS still aborted after the first fix
-------------------------------------------
-1. ``QT_QPA_PLATFORM=offscreen`` (as in the documented pytest command) is
-   unstable on macOS with PySide6: ``QApplication`` / platform-plugin init
-   can ``abort()`` natively during the first Qt fixture setup. Upstream CI
-   practice is ``minimal`` on macOS and ``offscreen`` on Linux.
+macOS platform policy
+---------------------
+``QT_QPA_PLATFORM=offscreen`` and ``minimal`` are unreliable with PySide6 on
+many macOS installs:
 
-2. Destroying a still-running ``QThread`` calls ``abort()`` in Qt. GUI tests
-   that touch ``ReconstructionRunner`` (or leave timers/threads alive) can
-   therefore kill the interpreter at fixture teardown / GC / session exit —
-   which looks like a crash "during pytest", not a failed assertion.
+* ``offscreen`` can native-abort during ``QApplication`` setup.
+* ``minimal`` may be present on disk yet fail to load (process abort /
+  exit 134), even when ``cocoa`` works and the PETSim GUI launches.
 
-This conftest:
-* remaps Darwin ``offscreen`` → ``minimal`` **before** importing PySide6
-* creates one session ``QApplication`` with ``quitOnLastWindowClosed=False``
-* stops every live ``QThread`` after each test
-* tears down ``MainWindow`` / acquisition controllers explicitly
+Because the desktop app already runs under **cocoa**, pytest on Darwin
+defaults to ``cocoa`` and remaps ``offscreen`` / ``minimal`` → ``cocoa``.
+An explicit ``QT_QPA_PLATFORM=cocoa`` is never overridden.
+
+Linux keeps ``offscreen`` as the headless default.
+
+Also: stop live ``QThread``s after each test so ``~QThread`` cannot abort()
+at GC, and tear down acquisition controllers / windows explicitly.
 """
 
 from __future__ import annotations
@@ -32,21 +32,32 @@ import warnings
 
 
 def _configure_qt_platform() -> str:
+    """Choose a Qt platform plugin that can actually initialize.
+
+    Returns the value written to ``QT_QPA_PLATFORM``.
+    """
+    requested = os.environ.get("QT_QPA_PLATFORM")
+
     if sys.platform == "darwin":
-        requested = os.environ.get("QT_QPA_PLATFORM", "minimal")
-        if requested == "offscreen":
+        # Prefer cocoa: it matches a working PETSim GUI on macOS.
+        if requested in (None, ""):
+            os.environ["QT_QPA_PLATFORM"] = "cocoa"
+        elif requested in {"offscreen", "minimal"}:
             warnings.warn(
-                "QT_QPA_PLATFORM=offscreen frequently native-aborts on macOS "
-                "with PySide6 during QApplication fixture setup; "
-                "PETSim pytest is using 'minimal' instead.",
+                f"QT_QPA_PLATFORM={requested} is unreliable on macOS with "
+                "PySide6 (abort / plugin load failure). PETSim pytest is "
+                "using 'cocoa' instead. Set QT_QPA_PLATFORM=cocoa explicitly "
+                "to silence this warning.",
                 UserWarning,
                 stacklevel=1,
             )
-            os.environ["QT_QPA_PLATFORM"] = "minimal"
-        else:
-            os.environ.setdefault("QT_QPA_PLATFORM", "minimal")
-    else:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            os.environ["QT_QPA_PLATFORM"] = "cocoa"
+        # else: honor cocoa or any other explicit choice
+        return os.environ["QT_QPA_PLATFORM"]
+
+    # Linux / other: headless default for CI.
+    if not requested:
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
     return os.environ["QT_QPA_PLATFORM"]
 
 
@@ -66,7 +77,6 @@ def pytest_configure(config):  # noqa: ARG001
     if app is None:
         app = QApplication([sys.argv[0] if sys.argv else "petsim-pytest"])
     app.setQuitOnLastWindowClosed(False)
-    # Expose for debugging local macOS runs.
     config._petsim_qt_platform = _QT_PLATFORM  # type: ignore[attr-defined]
     config._petsim_qt_plugin = app.platformName()  # type: ignore[attr-defined]
 
@@ -79,7 +89,6 @@ def pytest_report_header(config):
 
 def _stop_all_qthreads(timeout_ms: int = 5_000) -> None:
     """Quit any QThread still running so ~QThread cannot abort() the process."""
-    # Copy the list — quitting can mutate object graph during iteration.
     threads = []
     for obj in gc.get_objects():
         try:
@@ -93,7 +102,6 @@ def _stop_all_qthreads(timeout_ms: int = 5_000) -> None:
                 thread.quit()
                 thread.wait(timeout_ms)
         except RuntimeError:
-            # Underlying C++ object already deleted.
             continue
 
 
@@ -111,7 +119,7 @@ def qapp():
 
 @pytest.fixture(autouse=True)
 def _qt_thread_cleanup():
-    """After every test, ensure no QThread is left running (macOS abort guard)."""
+    """After every test, ensure no QThread is left running (abort guard)."""
     yield
     _stop_all_qthreads()
     app = QApplication.instance()

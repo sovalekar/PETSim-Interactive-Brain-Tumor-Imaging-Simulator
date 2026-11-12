@@ -1,9 +1,8 @@
 """Run Qt/GUI snippets in a child process so a native abort cannot kill pytest.
 
-On macOS, ``QApplication`` + Matplotlib ``FigureCanvasQTAgg`` (used by
-``MainWindow``) can still ``abort()`` inside the Qt platform plugin.  That
-kills the whole interpreter.  Executing those checks in a subprocess lets
-the parent pytest session continue and exit with a normal status code.
+``MainWindow`` pulls in Matplotlib ``FigureCanvasQTAgg``. If the chosen Qt
+platform plugin aborts during widget construction, isolating that work in a
+subprocess keeps the parent pytest session alive.
 """
 
 from __future__ import annotations
@@ -26,20 +25,23 @@ class QtSubprocessResult:
 
 
 def qt_subprocess_env() -> dict[str, str]:
+    """Environment for child Qt scripts (same policy as ``tests.conftest``)."""
     env = os.environ.copy()
     if sys.platform == "darwin":
-        # Never pass offscreen into the child on macOS.
-        env["QT_QPA_PLATFORM"] = "minimal"
+        # cocoa works when the PETSim GUI launches; offscreen/minimal often do not.
+        current = env.get("QT_QPA_PLATFORM", "cocoa")
+        if current in {"offscreen", "minimal", ""}:
+            env["QT_QPA_PLATFORM"] = "cocoa"
+        else:
+            env["QT_QPA_PLATFORM"] = current
     else:
         env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    # Hint for child scripts (optional).
     env["PETSIM_PYTEST_CHILD"] = "1"
     return env
 
 
 def run_qt_script(script: str, *, timeout: float = 180.0) -> QtSubprocessResult:
-    """Execute ``script`` with ``python -c`` under a headless Qt platform."""
-    # Ensure the child prints a sentinel on success.
+    """Execute ``script`` with ``python -c`` under a working Qt platform."""
     wrapped = (
         "import sys\n"
         + script
