@@ -14,7 +14,49 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **1** | Done | Dark three-panel UI, adjustable brain/tumor phantom, 48-crystal ring |
 | **2** | Done | Annihilation sampling, 511 keV back-to-back photons, efficiency, coincidences, LOR animation |
 | **3** | Done | Measured sinogram from coincidences + filtered backprojection (FBP) |
-| **4** | **This release (v0.4.0)** | Tumor localization, TBR / contrast / background CV, coincidence-count comparison |
+| **4** | Done | Tumor localization, TBR / contrast / background CV, coincidence-count comparison |
+| **5** | **This release (v0.5.0)** | MLEM iterative reconstruction, convergence, and FBP comparison |
+
+---
+
+## Stage 5 overview
+
+Stage 5 adds **maximum-likelihood expectation maximization (MLEM)** next to filtered backprojection. Both algorithms consume the same measured coincidence list. MLEM does not use the tumor’s true position.
+
+### FBP versus MLEM
+
+FBP filters each projection with a ramp (optionally Hann-windowed) and backprojects once. It is fast and linear, and it can produce negative pixels. With few coincidences the ramp amplifies noise, which is why the FBP path still applies a light sinogram smooth.
+
+MLEM iteratively updates a nonnegative image so that its predicted sinogram better matches the measured counts under a Poisson model:
+
+\[
+x^{k+1}_j = \frac{x^k_j}{\sum_i A_{ij}} \sum_i \frac{A_{ij}\, y_i}{\sum_l A_{il} x^k_l}
+\]
+
+`A` is a pixel-driven parallel-beam projector (linear interpolation in `s`) and `Aᵀ` is the matching backprojector. They are adjoints; neither is the FBP operator. Sensitivity `Σ_i A_ij` normalizes the update. Zero-sensitivity pixels stay at 0. Bins with predicted counts of 0 contribute nothing to the ratio; if those bins also contain counts, the Poisson log-likelihood is undefined.
+
+The tracked objective is
+
+\[
+L(x) = \sum_i \big(y_i \log \hat y_i - \hat y_i\big)
+\]
+
+with `ŷ = Ax`, omitting the constant `Σ log(y!)`. Relative change is `‖xⁿ − xⁿ⁻¹‖ / ‖xⁿ⁻¹‖`. More iterations usually raise `L` and can look smoother, but they are not guaranteed to improve localization error, contrast, or background CV on one noisy realization. Early iterates are blurry; later iterates fit noise. That is expected for this simplified model (no attenuation, scatter, or randoms).
+
+### Using Stage 5
+
+1. Acquire coincidences as in Stages 2–3.  
+2. In **Method**, choose **Filtered Backprojection (FBP)** or **Maximum Likelihood EM (MLEM)**.  
+3. FBP still uses **Filter** (Hann or Ramp). MLEM shows **Iterations** (1, 5, 10, 20, 50; default 10) and hides the FBP filter.  
+4. **Run Reconstruction** updates the PET image canvas only. MLEM also fills the separate convergence canvas and can be cancelled between iterations.  
+5. **Compare FBP and MLEM** reconstructs both from the same coincidences and switches the image view to **FBP vs MLEM**.  
+6. **Shared intensity scale** forces one display maximum for that pair. Independent scaling is the default. Metrics always use nonnegative reconstructed values, not the display scale.  
+7. The FBP-versus-MLEM table reports localization error (FOV), TBR, relative contrast, background CV, runtime, and the MLEM iteration count.  
+8. The Stage 4 count-comparison graph stays on its own canvas. That comparison still uses FBP.
+
+### Reproduce a comparison
+
+Use a fixed acquisition seed, the same event count and detector efficiency, then **Compare FBP and MLEM** at 10 iterations with the Hann FBP filter. Repeat with 1 and 50 iterations to see the likelihood rise without assuming every metric improves.
 
 ---
 
@@ -122,10 +164,12 @@ petsim/
 ├── analysis_worker.py            # QThread Stage 4 analysis worker
 ├── models/                       # Phantom + detector geometry
 ├── physics/                      # Stage 2 acquisition engine
-├── reconstruction/               # Stage 3 (Qt-free)
+├── reconstruction/               # Stage 3 FBP + Stage 5 MLEM (Qt-free)
 │   ├── lor.py
 │   ├── sinogram.py
 │   ├── fbp.py
+│   ├── projectors.py             # Adjoint forward / back projectors
+│   ├── mlem.py
 │   └── pipeline.py
 ├── analysis/                     # Stage 4 (Qt-free)
 │   ├── coordinates.py            # Pixel ↔ FOV
@@ -211,6 +255,9 @@ coincidence-count comparison, analysis invalidation, and Stage 2–3 regression 
 - ROI geometry uses phantom ground truth for evaluation; localization estimates do not  
 - Count-comparison curves are single-realization nested prefixes — not ensemble averages  
 - Very low counts remain noisy; prefer ≥5k coincidences for stable demos  
+- MLEM uses an unsmoothed sinogram; FBP may pre-smooth. Same coincidences, different preprocessing  
+- Extra MLEM iterations can fit noise; they do not guarantee better localization or contrast  
+- Default MLEM is 10 iterations on a 128×128 grid with the 96×128 sinogram  
 
 ---
 

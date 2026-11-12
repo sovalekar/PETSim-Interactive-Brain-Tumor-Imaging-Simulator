@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from petsim import __version__
 from petsim.acquisition_controller import AcquisitionController
+from petsim.analysis.pipeline import analyze_reconstruction
 from petsim.analysis_worker import AnalysisRunner
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
@@ -51,7 +52,7 @@ class MainWindow(QMainWindow):
         self.acquisition.apply_config(self.controls.acquisition_config())
         self._refresh_detector(state)
         self.statusBar().showMessage(
-            "Ready — Stage 4: acquire, reconstruct, then run quantitative analysis."
+            "Ready — Stage 5: acquire, then reconstruct with FBP or MLEM."
         )
 
     def _build_menu(self) -> None:
@@ -118,6 +119,8 @@ class MainWindow(QMainWindow):
         self.acquisition.reset_done.connect(self._on_acq_reset_done)
 
         self.reconstruction.run_requested.connect(self._on_run_reconstruction)
+        self.reconstruction.compare_requested.connect(self._on_compare_algorithms)
+        self.reconstruction.cancel_requested.connect(self.recon_runner.cancel)
         self.reconstruction.clear_requested.connect(self._on_clear_reconstruction)
         self.reconstruction.analyze_requested.connect(self._on_run_analysis)
         self.reconstruction.count_comparison_requested.connect(
@@ -125,7 +128,9 @@ class MainWindow(QMainWindow):
         )
 
         self.recon_runner.finished.connect(self._on_recon_finished)
+        self.recon_runner.pair_finished.connect(self._on_pair_finished)
         self.recon_runner.failed.connect(self._on_recon_failed)
+        self.recon_runner.progress.connect(self._on_mlem_progress)
 
         self.analysis_runner.analysis_finished.connect(self._on_analysis_finished)
         self.analysis_runner.analysis_failed.connect(self._on_analysis_failed)
@@ -161,6 +166,7 @@ class MainWindow(QMainWindow):
 
     def _on_start(self) -> None:
         # New acquisition invalidates any previous reconstruction / analysis.
+        self.recon_runner.invalidate_pending()
         self.reconstruction.invalidate("New acquisition started.")
         self.acquisition.apply_config(self.controls.acquisition_config())
         self.acquisition.start()
@@ -173,6 +179,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Acquisition reset.")
 
     def _on_acq_reset_done(self) -> None:
+        self.recon_runner.invalidate_pending()
         self.detector_view.clear_events()
         self.reconstruction.set_acquired_phantom(None)
         self.reconstruction.invalidate("Acquisition data cleared.")
@@ -218,14 +225,72 @@ class MainWindow(QMainWindow):
         if not ok:
             self.reconstruction.show_error("Reconstruction already in progress.")
             return
+        if config.method == "mlem":
+            label = f"MLEM ({config.n_iterations} iterations)"
+        else:
+            label = f"FBP ({config.filter_name})"
         self.statusBar().showMessage(
-            f"Reconstructing {hits_a.shape[0]:,} coincidences with FBP "
-            f"({config.filter_name})…"
+            f"Reconstructing {hits_a.shape[0]:,} coincidences with {label}…"
+        )
+
+    def _on_mlem_progress(
+        self, job_id: int, iteration: int, total: int, loglik: float, rel: float
+    ) -> None:
+        if not self.recon_runner.accepts(job_id):
+            return
+        self.reconstruction.show_mlem_progress(iteration, total, loglik, rel)
+
+    def _on_compare_algorithms(self, fbp_config: ReconstructionConfig, mlem_config: ReconstructionConfig) -> None:
+        hits_a, hits_b = self.acquisition.coincidence_endpoints()
+        if hits_a.shape[0] == 0:
+            self.reconstruction.show_error("No coincidence endpoints available.")
+            return
+        self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
+        ok = self.recon_runner.start(
+            hits_a,
+            hits_b,
+            fbp_config,
+            pair=True,
+            mlem_config=mlem_config,
+        )
+        if not ok:
+            self.reconstruction.show_error("Reconstruction already in progress.")
+            return
+        self.statusBar().showMessage(
+            f"Comparing FBP and MLEM on {hits_a.shape[0]:,} coincidences "
+            f"({mlem_config.n_iterations} MLEM iterations)…"
         )
 
     def _on_recon_finished(self, result: ReconstructionResult) -> None:
+        if not self.recon_runner.accepts(result.job_id):
+            return
         self.reconstruction.show_result(result)
+        self._refresh_algorithm_metrics()
         self.statusBar().showMessage(result.message)
+
+    def _on_pair_finished(self, fbp: ReconstructionResult, mlem: ReconstructionResult) -> None:
+        if not self.recon_runner.accepts(fbp.job_id):
+            return
+        self.reconstruction.show_algorithm_pair(fbp, mlem)
+        self._refresh_algorithm_metrics()
+        self.statusBar().showMessage(f"{fbp.message} | {mlem.message}")
+
+    def _refresh_algorithm_metrics(self) -> None:
+        fbp = self.reconstruction._fbp_result
+        mlem = self.reconstruction._mlem_result
+        state = self.acquisition.acquired_phantom_state
+        if (
+            fbp is None
+            or mlem is None
+            or not fbp.has_data
+            or not mlem.has_data
+            or state is None
+        ):
+            return
+        self.reconstruction.show_algorithm_metrics(
+            analyze_reconstruction(fbp, state),
+            analyze_reconstruction(mlem, state),
+        )
 
     def _on_recon_failed(self, message: str) -> None:
         self.reconstruction.show_error(message)
@@ -252,7 +317,7 @@ class MainWindow(QMainWindow):
                 "No coincidence endpoints available for count comparison."
             )
             return
-        config = self.reconstruction.current_config()
+        config = self.reconstruction.current_config().as_method("fbp")
         phantom_state = self.acquisition.acquired_phantom_state
         ok = self.analysis_runner.start_count_comparison(
             hits_a, hits_b, config, phantom_state
@@ -280,6 +345,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Analysis failed: {message}")
 
     def _on_clear_reconstruction(self) -> None:
+        self.recon_runner.invalidate_pending()
         self.statusBar().showMessage("Reconstruction output cleared.")
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt naming
@@ -304,7 +370,8 @@ class MainWindow(QMainWindow):
                 "Built with PySide6, NumPy, and Matplotlib.<br><br>"
                 "<b>Stage 2:</b> annihilation, 511&nbsp;keV photons, coincidences.<br>"
                 "<b>Stage 3:</b> measured sinogram + filtered backprojection (FBP).<br>"
-                "<b>Stage 4:</b> localization, contrast / TBR, count comparison.<br><br>"
+                "<b>Stage 4:</b> localization, contrast / TBR, count comparison.<br>"
+                "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br><br>"
                 "Idealized model: no attenuation, scatter, or positron range.<br>"
                 "Not a clinical diagnostic tool."
             ),
