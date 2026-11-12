@@ -9,23 +9,13 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
-
-from petsim.acquisition_controller import AcquisitionController
-from petsim.main_window import MainWindow
 from petsim.models.detector import DetectorRing
 from petsim.models.phantom import BrainPhantom, PhantomState
 from petsim.physics.acquisition import AcquisitionConfig
 from petsim.physics.pet_engine import PETEngine
 from petsim.reconstruction.pipeline import ReconstructionConfig, reconstruct_from_endpoints
 
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+# ``qapp``, ``main_window``, and ``acquisition_controller`` come from conftest.py.
 
 
 def _endpoints_from_engine(state: PhantomState, seed: int, n: int = 8000):
@@ -92,8 +82,8 @@ def test_fixed_seed_pipeline_deterministic():
     assert np.allclose(r1.image, r2.image)
 
 
-def test_controller_endpoints_exclude_non_coincidences(qapp):
-    ctrl = AcquisitionController()
+def test_controller_endpoints_exclude_non_coincidences(qapp, acquisition_controller):
+    ctrl = acquisition_controller
     ctrl.set_phantom_state(PhantomState())
     ctrl.apply_config(
         AcquisitionConfig(
@@ -115,8 +105,8 @@ def test_controller_endpoints_exclude_non_coincidences(qapp):
     assert ctrl.acquired_activity is not None
 
 
-def test_main_window_recon_state_management(qapp):
-    window = MainWindow()
+def test_main_window_recon_state_management(qapp, main_window):
+    window = main_window
     window.show()
     qapp.processEvents()
 
@@ -145,6 +135,8 @@ def test_main_window_recon_state_management(qapp):
     while window.recon_runner.busy and time.time() < deadline:
         qapp.processEvents()
         time.sleep(0.01)
+    # Ensure the worker thread has fully joined before assertions / teardown.
+    assert window.recon_runner.shutdown(timeout_ms=5000)
     qapp.processEvents()
 
     assert window.reconstruction._result is not None

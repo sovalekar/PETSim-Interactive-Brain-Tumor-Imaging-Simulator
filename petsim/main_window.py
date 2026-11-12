@@ -222,6 +222,12 @@ class MainWindow(QMainWindow):
     def _on_clear_reconstruction(self) -> None:
         self.statusBar().showMessage("Reconstruction output cleared.")
 
+    def closeEvent(self, event) -> None:  # noqa: N802 — Qt naming
+        """Stop timers/threads before the window is destroyed (macOS-safe)."""
+        self.acquisition.reset()
+        self.recon_runner.shutdown(timeout_ms=10_000)
+        super().closeEvent(event)
+
     def _reset_splitter(self) -> None:
         self.splitter.setSizes([300, 560, 480])
 

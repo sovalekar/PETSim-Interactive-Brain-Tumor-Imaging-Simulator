@@ -8,24 +8,15 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
-
-from petsim.acquisition_controller import AcquisitionController
-from petsim.main_window import MainWindow
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig
 
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
+# ``qapp``, ``main_window``, and ``acquisition_controller`` come from conftest.py
+# (session-scoped QApplication + macOS-safe teardown).
 
 
-def test_controller_batches_and_stats(qapp):
-    ctrl = AcquisitionController()
+def test_controller_batches_and_stats(qapp, acquisition_controller):
+    ctrl = acquisition_controller
     ctrl.set_phantom_state(PhantomState())
     ctrl.apply_config(
         AcquisitionConfig(
@@ -53,8 +44,8 @@ def test_controller_batches_and_stats(qapp):
     assert sum(seen) == 1000
 
 
-def test_main_window_stays_responsive_during_acquisition(qapp):
-    window = MainWindow()
+def test_main_window_stays_responsive_during_acquisition(qapp, main_window):
+    window = main_window
     window.show()
     qapp.processEvents()
 
@@ -81,8 +72,8 @@ def test_main_window_stays_responsive_during_acquisition(qapp):
     assert window.acquisition.stats.coincidences == 1000
 
 
-def test_phantom_change_resets_acquisition(qapp):
-    window = MainWindow()
+def test_phantom_change_resets_acquisition(qapp, main_window):
+    window = main_window
     qapp.processEvents()
     window.controls._n_events.setValue(5000)
     window.controls._speed.setCurrentText("Fast")

@@ -66,7 +66,8 @@ class ReconstructionRunner(QObject):
         if self._busy:
             return False
         self._busy = True
-        self._thread = QThread()
+        # Parent the thread to this runner so lifetimes stay tied together.
+        self._thread = QThread(self)
         self._task = _ReconTask(hits_a, hits_b, config)
         self._task.moveToThread(self._thread)
         self._thread.started.connect(self._task.run)
@@ -79,6 +80,27 @@ class ReconstructionRunner(QObject):
         self._thread.start()
         return True
 
+    def shutdown(self, timeout_ms: int = 30_000) -> bool:
+        """Block until any worker thread finishes (safe for window close / tests).
+
+        On macOS, destroying a ``MainWindow`` while a ``QThread`` is still
+        running is a common hard crash during pytest teardown.
+        """
+        thread = self._thread
+        if thread is None:
+            self._busy = False
+            return True
+        if thread.isRunning():
+            thread.quit()
+            finished = thread.wait(timeout_ms)
+            if not finished:
+                thread.terminate()
+                thread.wait(1000)
+                self._busy = False
+                return False
+        self._busy = False
+        return True
+
     def _on_finished(self, result: ReconstructionResult) -> None:
         self.finished.emit(result)
 
@@ -86,10 +108,12 @@ class ReconstructionRunner(QObject):
         self.failed.emit(message)
 
     def _cleanup(self) -> None:
-        if self._task is not None:
-            self._task.deleteLater()
-            self._task = None
-        if self._thread is not None:
-            self._thread.deleteLater()
-            self._thread = None
+        task = self._task
+        thread = self._thread
+        self._task = None
+        self._thread = None
         self._busy = False
+        if task is not None:
+            task.deleteLater()
+        if thread is not None:
+            thread.deleteLater()
