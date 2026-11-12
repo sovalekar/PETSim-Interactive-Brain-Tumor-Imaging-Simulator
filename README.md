@@ -32,7 +32,7 @@ Workflow:
 2. Run an acquisition (prefer enough events to reach several thousand coincidences).  
 3. **Run Reconstruction**.  
 4. In **Quantitative Analysis**, click **Run Analysis**.  
-5. Optionally click **Count Comparison** and inspect the table / CV plot.  
+5. Optionally click **Count Comparison**. The CV graph appears in its own section and leaves the reconstructed image in place.  
 6. Resetting acquisition, clearing reconstruction, changing the phantom, or changing the FBP filter clears stale metrics.
 
 ### Tumor localization
@@ -84,7 +84,7 @@ Workflow:
 3. Click **Run Reconstruction**.  
 4. PETSim bins measured LORs into a sinogram \(p(\theta, s)\).  
 5. PETSim applies **filtered backprojection** to form a \(128\times 128\) activity image.  
-6. View **Reconstructed Image**, **Sinogram**, **Comparison**, or **Count Comparison Plot**.
+6. View **Reconstructed Image**, **Sinogram**, or **Comparison**. The coincidence-count graph uses its own canvas below the metrics and does not replace the PET image.
 
 Reconstruction uses **only coincidence endpoints** (detector-ring hits). True annihilation positions are never reconstruction inputs.
 
@@ -171,7 +171,7 @@ python -m petsim
 5. Click **Run Reconstruction**.  
 6. Click **Run Analysis** — inspect localization, TBR, contrast, and background CV.  
 7. Optionally enable **Overlay tumor / background ROIs**.  
-8. Click **Count Comparison** for the 1k–10k table and CV plot.  
+8. Click **Count Comparison** for the 1k–10k table and the separate CV plot.  
 9. Changing the phantom **clears** acquisition, reconstruction, and analysis so datasets are never mixed.
 
 ---

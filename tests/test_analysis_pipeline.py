@@ -9,7 +9,11 @@ from petsim.models.detector import DetectorRing
 from petsim.models.phantom import BrainPhantom, PhantomState
 from petsim.physics.acquisition import AcquisitionBuffer
 from petsim.physics.pet_engine import PETEngine
-from petsim.reconstruction.pipeline import ReconstructionConfig, reconstruct_from_endpoints
+from petsim.reconstruction.pipeline import (
+    ReconstructionConfig,
+    ReconstructionResult,
+    reconstruct_from_endpoints,
+)
 from petsim.widgets.reconstruction_panel import ReconstructionPanel
 
 
@@ -104,6 +108,85 @@ def test_panel_clear_output_resets_metrics(qapp):
     panel.clear_output()
     assert panel._analysis is None
     assert panel._comparison is None
+
+
+def _synthetic_result():
+    from petsim.reconstruction.sinogram import Sinogram
+
+    sino = Sinogram(
+        data=np.ones((4, 8), dtype=np.float64),
+        theta_edges=np.linspace(0.0, np.pi, 5),
+        s_edges=np.linspace(-1.0, 1.0, 9),
+        n_events=10,
+    )
+    image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float64).reshape(32, 32)
+    return ReconstructionResult(
+        sinogram=sino,
+        image=image,
+        config=ReconstructionConfig(image_size=32),
+        n_coincidences=10,
+        message="Synthetic FBP",
+    )
+
+
+def _synthetic_comparison():
+    from petsim.analysis.count_comparison import CountComparisonResult, CountLevelMetrics
+
+    levels = [
+        CountLevelMetrics(1000, 1000, True, 0.12, 2.1, 0.80, "OK"),
+        CountLevelMetrics(3000, 3000, True, 0.08, 2.4, 0.55, "OK"),
+        CountLevelMetrics(5000, 5000, True, 0.05, 2.6, 0.40, "OK"),
+        CountLevelMetrics(10000, 4000, False, None, None, None, "Insufficient coincidences."),
+    ]
+    return CountComparisonResult(
+        levels=levels,
+        total_available=4000,
+        message="Compared nested prefixes.",
+    )
+
+
+def test_reconstruction_and_count_canvases_are_independent(qapp):
+    panel = ReconstructionPanel()
+    assert panel.canvas is not panel.count_canvas
+    assert panel.canvas.figure is not panel.count_canvas.figure
+    labels = [panel._display.itemText(i) for i in range(panel._display.count())]
+    assert "Count Comparison Plot" not in labels
+    assert "Reconstructed Image" in labels
+
+    result = _synthetic_result()
+    panel.show_result(result)
+    recon_title = panel.canvas.figure.axes[0].get_title()
+    assert "FBP" in recon_title
+
+    panel.show_count_comparison(_synthetic_comparison())
+    assert panel.canvas.figure.axes[0].get_title() == recon_title
+    count_title = panel.count_canvas.figure.axes[0].get_title()
+    assert "coefficient of variation" in count_title.lower()
+    assert any(
+        abs(line.get_xdata()[0] - 1000) < 1e-6
+        for line in panel.count_canvas.figure.axes[0].get_lines()
+    )
+
+    panel._cmap.setCurrentText("gray")
+    assert panel.canvas.figure.axes[0].get_title() == recon_title
+    assert panel.count_canvas.figure.axes[0].get_title() == count_title
+
+    panel.show_result(result)
+    assert "FBP" in panel.canvas.figure.axes[0].get_title()
+    assert panel.count_canvas.figure.axes[0].get_title() == count_title
+    assert panel._comparison is not None
+
+    panel.invalidate("Acquisition data cleared.")
+    assert panel._comparison is None
+    assert panel._result is None
+    placeholder = " ".join(
+        text.get_text() for text in panel.count_canvas.figure.axes[0].texts
+    )
+    assert "Count Comparison" in placeholder
+    recon_placeholder = " ".join(
+        text.get_text() for text in panel.canvas.figure.axes[0].texts
+    )
+    assert "Acquisition data cleared" in recon_placeholder
 
 
 def test_filter_change_clears_stale_metrics(qapp):

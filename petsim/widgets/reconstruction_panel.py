@@ -120,41 +120,6 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
 
         self.draw_idle()
 
-    def show_count_plot(self, comparison: CountComparisonResult) -> None:
-        """Plot background CV versus actual coincidence count."""
-        xs = [
-            level.actual_count
-            for level in comparison.levels
-            if level.available and level.background_cv is not None
-        ]
-        ys = [
-            level.background_cv
-            for level in comparison.levels
-            if level.available and level.background_cv is not None
-        ]
-        self._figure.clear()
-        ax = self._figure.add_subplot(111)
-        self._style_axis(ax)
-        if not xs:
-            ax.text(
-                0.5,
-                0.5,
-                "No count-comparison CV points available.",
-                ha="center",
-                va="center",
-                color=COLORS["text_muted"],
-                transform=ax.transAxes,
-            )
-        else:
-            ax.plot(xs, ys, "o-", color=COLORS["detector"], markersize=6)
-            ax.set_xlabel("Detected coincidences")
-            ax.set_ylabel("Background CV (dimensionless)")
-            ax.set_title("Background variability vs coincidence count", fontsize=10)
-            ax.set_xscale("log")
-            ax.grid(True, color=COLORS["grid"], alpha=0.5)
-        self._figure.tight_layout(pad=0.5)
-        self.draw_idle()
-
     def _draw_image(
         self,
         result: ReconstructionResult,
@@ -339,6 +304,96 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
         _ = im1
 
 
+class CountComparisonCanvas(FigureCanvasQTAgg):
+    """Dedicated canvas for background CV versus coincidence count.
+
+    Independent of ``ReconstructionCanvas`` so count comparison never replaces
+    the reconstructed PET image.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        self._figure = Figure(figsize=(4.2, 2.4), dpi=100, facecolor=COLORS["panel"])
+        super().__init__(self._figure)
+        self.setParent(parent)
+        self.show_placeholder(
+            "Run Count Comparison to plot background CV vs coincidence count."
+        )
+
+    def _style_axis(self, ax) -> None:
+        ax.set_facecolor(COLORS["bg"])
+        ax.tick_params(colors=COLORS["text_muted"], labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_color(COLORS["border"])
+        ax.title.set_color(COLORS["text"])
+        ax.xaxis.label.set_color(COLORS["text_muted"])
+        ax.yaxis.label.set_color(COLORS["text_muted"])
+
+    def show_placeholder(self, message: str) -> None:
+        self._figure.clear()
+        ax = self._figure.add_subplot(111)
+        self._style_axis(ax)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title("Coincidence Count Comparison", fontsize=10)
+        ax.text(
+            0.5,
+            0.5,
+            message,
+            ha="center",
+            va="center",
+            color=COLORS["text_muted"],
+            fontsize=9,
+            wrap=True,
+            transform=ax.transAxes,
+        )
+        self._figure.tight_layout(pad=0.5)
+        self.draw_idle()
+
+    def show_comparison(self, comparison: CountComparisonResult) -> None:
+        """Plot background CV versus detected coincidence count."""
+        xs = [
+            level.actual_count
+            for level in comparison.levels
+            if level.available and level.background_cv is not None
+        ]
+        ys = [
+            level.background_cv
+            for level in comparison.levels
+            if level.available and level.background_cv is not None
+        ]
+        self._figure.clear()
+        ax = self._figure.add_subplot(111)
+        self._style_axis(ax)
+        ax.set_title(
+            "Background coefficient of variation vs coincidence count",
+            fontsize=10,
+        )
+        if not xs:
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.text(
+                0.5,
+                0.5,
+                comparison.message or "No count-comparison CV points available.",
+                ha="center",
+                va="center",
+                color=COLORS["text_muted"],
+                fontsize=9,
+                wrap=True,
+                transform=ax.transAxes,
+            )
+        else:
+            ax.plot(xs, ys, "o-", color=COLORS["detector"], markersize=6)
+            ax.set_xlabel("Detected coincidences")
+            ax.set_ylabel("Background CV (dimensionless)")
+            ax.set_xscale("log")
+            ax.grid(True, color=COLORS["grid"], alpha=0.6)
+            ax.set_xticks(xs)
+            ax.set_xticklabels([f"{int(x):,}" for x in xs])
+        self._figure.tight_layout(pad=0.5)
+        self.draw_idle()
+
+
 class ReconstructionPanel(QFrame):
     """Stage 3 controls + Stage 4 quantitative analysis + Matplotlib view."""
 
@@ -407,7 +462,7 @@ class ReconstructionPanel(QFrame):
         row.addWidget(QLabel("Display"))
         self._display = QComboBox()
         self._display.addItems(
-            ["Reconstructed Image", "Sinogram", "Comparison", "Count Comparison Plot"]
+            ["Reconstructed Image", "Sinogram", "Comparison"]
         )
         self._display.currentTextChanged.connect(self._refresh_canvas)
         row.addWidget(self._display, stretch=1)
@@ -422,11 +477,11 @@ class ReconstructionPanel(QFrame):
         layout.addLayout(row)
 
         self.canvas = ReconstructionCanvas(self)
-        self.canvas.setMinimumHeight(220)
+        self.canvas.setMinimumHeight(280)
         self.canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
-        layout.addWidget(self.canvas, stretch=1)
+        layout.addWidget(self.canvas)
 
         self._status = QLabel("Recorded coincidences: 0")
         self._status.setObjectName("HintLabel")
@@ -457,17 +512,10 @@ class ReconstructionPanel(QFrame):
         hint.setWordWrap(True)
         analysis_layout.addWidget(hint)
 
-        btn_row = QHBoxLayout()
         self._analyze_btn = QPushButton("Run Analysis")
         self._analyze_btn.setEnabled(False)
         self._analyze_btn.clicked.connect(self._on_analyze)
-        btn_row.addWidget(self._analyze_btn)
-
-        self._compare_btn = QPushButton("Count Comparison")
-        self._compare_btn.setEnabled(False)
-        self._compare_btn.clicked.connect(self._on_count_comparison)
-        btn_row.addWidget(self._compare_btn)
-        analysis_layout.addLayout(btn_row)
+        analysis_layout.addWidget(self._analyze_btn)
 
         self._overlay_rois = QCheckBox("Overlay tumor / background ROIs")
         self._overlay_rois.setChecked(True)
@@ -525,10 +573,16 @@ class ReconstructionPanel(QFrame):
         noise_grid.addWidget(self._n_cv, 0, 1)
         analysis_layout.addWidget(noise_box)
 
+        layout.addWidget(analysis_box)
+
         count_box = QGroupBox("Coincidence Count Comparison")
         count_layout = QVBoxLayout(count_box)
+        self._compare_btn = QPushButton("Count Comparison")
+        self._compare_btn.setEnabled(False)
+        self._compare_btn.clicked.connect(self._on_count_comparison)
+        count_layout.addWidget(self._compare_btn)
         self._count_table = QLabel(
-            "Target levels: 1k / 3k / 5k / 10k detected coincidences "
+            "Target levels: 1,000 / 3,000 / 5,000 / 10,000 detected coincidences "
             "(nested prefixes of the current acquisition)."
         )
         self._count_table.setObjectName("HintLabel")
@@ -537,9 +591,13 @@ class ReconstructionPanel(QFrame):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         count_layout.addWidget(self._count_table)
-        analysis_layout.addWidget(count_box)
-
-        layout.addWidget(analysis_box)
+        self.count_canvas = CountComparisonCanvas(self)
+        self.count_canvas.setMinimumHeight(200)
+        self.count_canvas.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        count_layout.addWidget(self.count_canvas)
+        layout.addWidget(count_box)
 
     def current_config(self) -> ReconstructionConfig:
         filt = "hann" if self._filter.currentText().lower().startswith("hann") else "ramp"
@@ -594,7 +652,11 @@ class ReconstructionPanel(QFrame):
 
     def show_result(self, result: ReconstructionResult) -> None:
         self._result = result
-        self.clear_analysis("New reconstruction — run analysis to refresh metrics.")
+        # Image-derived metrics belong to the previous reconstruction.
+        # The count-comparison figure is independent and is left in place.
+        self.clear_image_analysis(
+            "New reconstruction — run analysis to refresh localization and contrast."
+        )
         self._clear_btn.setEnabled(True)
         self.set_busy(False)
         neg = int(np.sum(result.image < 0))
@@ -671,20 +733,18 @@ class ReconstructionPanel(QFrame):
                     f"{'—':>8}  {'—':>8}  {'—':>8}  {level.message}"
                 )
         self._count_table.setText("\n".join(lines))
-        self._analysis_status.setText(comparison.message)
-        # Switch display so the optional CV plot is visible.
-        idx = self._display.findText("Count Comparison Plot")
-        if idx >= 0:
-            self._display.setCurrentIndex(idx)
-        self._refresh_canvas()
+        self.count_canvas.show_comparison(comparison)
 
     def show_analysis_error(self, message: str) -> None:
         self.set_analysis_busy(False)
         self._analysis_status.setText(f"Analysis failed: {message}")
 
-    def clear_analysis(self, reason: str = "Analysis cleared.") -> None:
+    def clear_image_analysis(self, reason: str = "Analysis cleared.") -> None:
+        """Clear localization and contrast for the current reconstruction.
+
+        Does not touch the coincidence-count comparison canvas.
+        """
         self._analysis = None
-        self._comparison = None
         self._loc_true.setText("—")
         self._loc_est.setText("—")
         self._loc_err.setText("—")
@@ -694,12 +754,26 @@ class ReconstructionPanel(QFrame):
         self._c_tbr.setText("—")
         self._c_contrast.setText("—")
         self._n_cv.setText("—")
-        self._count_table.setText(
-            "Target levels: 1k / 3k / 5k / 10k detected coincidences "
-            "(nested prefixes of the current acquisition)."
-        )
         self._analysis_status.setText(reason)
         self._update_analysis_buttons()
+
+    def clear_count_comparison(self, reason: str | None = None) -> None:
+        """Clear the count-comparison table and its dedicated plot."""
+        self._comparison = None
+        message = (
+            reason
+            or "Target levels: 1,000 / 3,000 / 5,000 / 10,000 detected coincidences "
+            "(nested prefixes of the current acquisition)."
+        )
+        self._count_table.setText(message)
+        if hasattr(self, "count_canvas"):
+            self.count_canvas.show_placeholder(
+                "Run Count Comparison to plot background CV vs coincidence count."
+            )
+
+    def clear_analysis(self, reason: str = "Analysis cleared.") -> None:
+        self.clear_image_analysis(reason)
+        self.clear_count_comparison(reason)
 
     def invalidate(self, reason: str = "Acquisition data changed.") -> None:
         """Clear results when the underlying coincidences are reset/replaced."""
@@ -717,27 +791,16 @@ class ReconstructionPanel(QFrame):
 
     def _on_recon_param_changed(self, *_args) -> None:
         if self._result is not None or self._analysis is not None:
-            self.clear_analysis(
-                "Reconstruction parameters changed — re-run reconstruction / analysis."
+            self.clear_image_analysis(
+                "Filter changed — metrics may not match a new reconstruction. "
+                "Re-run Reconstruction, then Run Analysis."
             )
-            if self._result is not None:
-                self._analysis_status.setText(
-                    "Filter changed — metrics may not match a new reconstruction. "
-                    "Re-run Reconstruction, then Run Analysis."
-                )
 
     def _refresh_canvas(self, *_args) -> None:
-        mode = self._display.currentText()
-        if mode.lower().startswith("count comparison"):
-            if self._comparison is not None and self._comparison.has_any:
-                self.canvas.show_count_plot(self._comparison)
-            else:
-                self.canvas._show_placeholder(
-                    "Run Count Comparison to plot background CV vs coincidence count."
-                )
-            return
+        """Redraw only the reconstruction canvas (colormap, display mode, ROIs)."""
         if self._result is None:
             return
+        mode = self._display.currentText()
 
         rois = None
         true_xy = None
