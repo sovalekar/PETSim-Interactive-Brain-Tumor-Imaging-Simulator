@@ -23,3 +23,8 @@ venv/
 *.mplstyle.bak
 *.log
 .venv-old/
+
+# Python virtual environments
+.venv/
+.venv-*/
+.venv.*/
