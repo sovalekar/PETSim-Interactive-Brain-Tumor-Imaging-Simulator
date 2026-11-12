@@ -44,11 +44,53 @@ class Sinogram:
         return float(max(abs(self.s_edges[0]), abs(self.s_edges[-1])))
 
 
+def _gauss_kernel(sigma: float) -> np.ndarray:
+    """Normalized 1-D Gaussian kernel (σ in bins). σ ≤ 0 → identity."""
+    if sigma <= 0.0:
+        return np.array([1.0], dtype=np.float64)
+    radius = int(np.ceil(3.0 * sigma))
+    x = np.arange(-radius, radius + 1, dtype=np.float64)
+    kernel = np.exp(-0.5 * (x / sigma) ** 2)
+    kernel /= kernel.sum()
+    return kernel
+
+
+def smooth_sinogram_data(
+    data: np.ndarray,
+    *,
+    sigma_s: float = 0.0,
+    sigma_theta: float = 0.0,
+) -> np.ndarray:
+    """Mild separable Gaussian smoothing of a sinogram (counts → soft counts).
+
+    Sparse PET sinograms (few thousand coincidences into many bins) are mostly
+    empty. Ramp/Hann FBP then reconstructs each occupied bin as a bright LOR
+    streak. A light pre-smooth is a standard low-count remedy: it does **not**
+    invent activity from the phantom; it only spreads measured counts locally
+    in ``(θ, s)`` before filtering.
+    """
+    out = np.asarray(data, dtype=np.float64).copy()
+    if out.size == 0:
+        return out
+    total = float(out.sum())
+    ks = _gauss_kernel(float(sigma_s))
+    kt = _gauss_kernel(float(sigma_theta))
+    if ks.size > 1:
+        out = np.apply_along_axis(lambda row: np.convolve(row, ks, mode="same"), 1, out)
+    if kt.size > 1:
+        out = np.apply_along_axis(lambda col: np.convolve(col, kt, mode="same"), 0, out)
+    # Edge effects of ``mode='same'`` can drop a little mass; restore total counts.
+    new_total = float(out.sum())
+    if total > 0.0 and new_total > 0.0:
+        out *= total / new_total
+    return out
+
+
 def build_sinogram(
     hits_a: np.ndarray,
     hits_b: np.ndarray,
     *,
-    n_theta: int = 180,
+    n_theta: int = 96,
     n_s: int = 128,
     s_max: float = 0.92,
 ) -> Sinogram:
@@ -59,7 +101,9 @@ def build_sinogram(
     hits_a, hits_b :
         Measured ring endpoints for each accepted coincidence, shape ``(M, 2)``.
     n_theta :
-        Number of angular bins over ``[0, π)``.
+        Number of angular bins over ``[0, π)``. Default 96 is matched to the
+        48-crystal ring (≈2 samples per crystal pitch) rather than an overly
+        fine 180-bin grid that leaves most bins empty at educational counts.
     n_s :
         Number of radial bins over ``[-s_max, s_max]``.
     s_max :

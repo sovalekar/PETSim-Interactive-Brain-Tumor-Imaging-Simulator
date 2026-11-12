@@ -92,13 +92,18 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
         self._style_axis(ax)
         fov = result.config.fov
         # Display non-negative view; underlying result.image is unchanged.
+        # Percentile windowing prevents a few streak spikes from washing out
+        # the brain/tumor (raw array is not modified).
         img = result.image_display
+        vmax = result.display_vmax(99.5)
         im = ax.imshow(
             img,
             origin="lower",
             extent=(-fov, fov, -fov, fov),
             cmap=cmap,
-            interpolation="nearest",
+            vmin=0.0,
+            vmax=vmax,
+            interpolation="bilinear",
             aspect="equal",
         )
         cbar = self._figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
@@ -145,7 +150,7 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
 
         fov = result.config.fov
         recon = result.image_display
-        vmax = float(max(recon.max(), 1e-12))
+        vmax = result.display_vmax(99.5)
 
         if phantom is not None and phantom.size:
             # Resample / display phantom on the same FOV framing.
@@ -189,7 +194,7 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
             cmap=cmap,
             vmin=0.0,
             vmax=vmax,
-            interpolation="nearest",
+            interpolation="bilinear",
             aspect="equal",
         )
         ax1.set_title("Acquired phantom", fontsize=9)
@@ -246,7 +251,8 @@ class ReconstructionPanel(QFrame):
         row = QHBoxLayout()
         row.addWidget(QLabel("Filter"))
         self._filter = QComboBox()
-        self._filter.addItems(["Ramp", "Hann"])
+        self._filter.addItems(["Hann", "Ramp"])
+        self._filter.setCurrentText("Hann")
         row.addWidget(self._filter, stretch=1)
         layout.addLayout(row)
 
@@ -292,11 +298,13 @@ class ReconstructionPanel(QFrame):
         return ReconstructionConfig(
             method="fbp",
             filter_name=filt,
-            n_theta=180,
+            n_theta=96,
             n_s=128,
             image_size=128,
             fov=1.0,
             s_max=0.92,
+            smooth_sigma_s=1.5,
+            smooth_sigma_theta=0.75,
         ).clamp()
 
     def update_coincidence_count(self, n: int) -> None:

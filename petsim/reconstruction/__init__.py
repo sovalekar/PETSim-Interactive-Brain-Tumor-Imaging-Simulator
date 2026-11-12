@@ -11,7 +11,7 @@ from petsim.reconstruction.pipeline import (
     ReconstructionResult,
     reconstruct_from_endpoints,
 )
-from petsim.reconstruction.sinogram import Sinogram, build_sinogram
+from petsim.reconstruction.sinogram import Sinogram, build_sinogram, smooth_sinogram_data
 
 __all__ = [
     "ReconstructionConfig",
@@ -21,4 +21,5 @@ __all__ = [
     "endpoints_to_sinogram_coords",
     "filtered_backprojection",
     "reconstruct_from_endpoints",
+    "smooth_sinogram_data",
 ]

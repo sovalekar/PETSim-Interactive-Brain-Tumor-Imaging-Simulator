@@ -46,16 +46,24 @@ The sinogram is accumulated from **simulated detector measurements**, not from a
 
 ### Filtered backprojection (FBP)
 
-1. For each angle, FFT the radial profile (with zero-padding).  
-2. Multiply by the **ramp** filter \(|\omega|\), optionally with a **Hann** window.  
-3. Inverse FFT → filtered projections \(q(s,\theta)\).  
-4. Backproject with linear interpolation:
+1. Optionally apply a **mild Gaussian pre-smooth** in sinogram space (default
+   \(\sigma_s=1.5\), \(\sigma_\theta=0.75\) bins). With only a few thousand
+   coincidences, an unsmoothed sinogram is nearly empty; FBP then draws bright
+   radial streaks for each occupied bin. Smoothing spreads **measured** counts
+   only — it does not copy the phantom.
+2. For each angle, FFT the radial profile (with zero-padding).  
+3. Multiply by the **ramp** filter \(|\omega|\), preferably with a **Hann** window (default).  
+4. Inverse FFT → filtered projections \(q(s,\theta)\).  
+5. Backproject with linear interpolation:
 
 \[
 f(x,y) \approx \frac{\pi}{N_\theta}\sum_{\theta} q(x\cos\theta + y\sin\theta,\,\theta)
 \]
 
-Negatives from filter ringing are kept in the raw array; the display view clips at zero without mutating the reconstruction.
+Default grid is **96×128** (angular × radial), adjusted for the 48-crystal ring.  
+Negatives from filter ringing are kept in the raw array; the display uses a
+non-negative view with **percentile windowing** (≈99.5%) so a few streak spikes
+do not wash out the brain/tumor.
 
 ### Model assumptions (still idealized)
 
@@ -139,9 +147,10 @@ Coverage includes LOR \(\leftrightarrow (\theta,s)\) conversion, sinogram binnin
 ## Known limitations
 
 - Educational model only — not clinically accurate  
-- Coarse 48-detector angular sampling → streaks / limited resolution  
+- Coarse 48-detector geometry + a few thousand coincidences → residual streaks even after Hann smoothing  
 - No attenuation correction, scatter, randoms, or iterative methods (OSEM / ML-EM)  
 - Comparison phantom is the activity map frozen at acquisition start  
+- Very low counts (≲2k coincidences) remain noisy; prefer ≥5k annihilations at high efficiency for demos  
 
 ---
 

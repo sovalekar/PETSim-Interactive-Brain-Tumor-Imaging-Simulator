@@ -7,20 +7,29 @@ from dataclasses import dataclass
 import numpy as np
 
 from petsim.reconstruction.fbp import filtered_backprojection
-from petsim.reconstruction.sinogram import Sinogram, build_sinogram
+from petsim.reconstruction.sinogram import Sinogram, build_sinogram, smooth_sinogram_data
 
 
 @dataclass
 class ReconstructionConfig:
-    """User-facing reconstruction parameters."""
+    """User-facing reconstruction parameters.
+
+    Defaults are chosen for the educational 48-crystal scanner with a few
+    thousand coincidences: geometry-matched angular sampling, Hann window,
+    and mild sinogram pre-smoothing so FBP is not dominated by single-LOR
+    streaks. Stage 2 acquisition physics is unchanged.
+    """
 
     method: str = "fbp"
-    filter_name: str = "ramp"  # ramp | hann
-    n_theta: int = 180
+    filter_name: str = "hann"  # ramp | hann
+    n_theta: int = 96
     n_s: int = 128
     image_size: int = 128
     fov: float = 1.0
     s_max: float = 0.92  # detector-ring radius by default
+    # Pre-FBP Gaussian smoothing in sinogram bins (0 disables).
+    smooth_sigma_s: float = 1.5
+    smooth_sigma_theta: float = 0.75
 
     def clamp(self) -> ReconstructionConfig:
         filt = self.filter_name.lower().strip()
@@ -36,6 +45,8 @@ class ReconstructionConfig:
             image_size=int(np.clip(self.image_size, 32, 512)),
             fov=float(max(self.fov, 1e-3)),
             s_max=float(max(abs(self.s_max), 1e-3)),
+            smooth_sigma_s=float(max(self.smooth_sigma_s, 0.0)),
+            smooth_sigma_theta=float(max(self.smooth_sigma_theta, 0.0)),
         )
 
 
@@ -57,6 +68,14 @@ class ReconstructionResult:
     @property
     def has_data(self) -> bool:
         return self.n_coincidences > 0 and self.sinogram.data.sum() > 0
+
+    def display_vmax(self, percentile: float = 99.5) -> float:
+        """Robust display ceiling so a few streak spikes do not wash out the image."""
+        pos = self.image_display
+        if pos.size == 0 or not np.any(pos > 0):
+            return 1.0
+        vmax = float(np.percentile(pos[pos > 0], percentile))
+        return max(vmax, 1e-12)
 
 
 def reconstruct_from_endpoints(
@@ -91,6 +110,19 @@ def reconstruct_from_endpoints(
     sino = build_sinogram(
         a, b, n_theta=cfg.n_theta, n_s=cfg.n_s, s_max=cfg.s_max
     )
+    # Work on a copy so the returned sinogram reflects what FBP actually used.
+    if cfg.smooth_sigma_s > 0.0 or cfg.smooth_sigma_theta > 0.0:
+        sino = Sinogram(
+            data=smooth_sinogram_data(
+                sino.data,
+                sigma_s=cfg.smooth_sigma_s,
+                sigma_theta=cfg.smooth_sigma_theta,
+            ),
+            theta_edges=sino.theta_edges,
+            s_edges=sino.s_edges,
+            n_events=sino.n_events,
+        )
+
     image = filtered_backprojection(
         sino,
         filter_name=cfg.filter_name,
@@ -104,6 +136,7 @@ def reconstruct_from_endpoints(
         n_coincidences=n,
         message=(
             f"FBP ({cfg.filter_name}) · {cfg.image_size}×{cfg.image_size} · "
-            f"{n:,} coincidences · sinogram {cfg.n_theta}×{cfg.n_s}"
+            f"{n:,} coincidences · sinogram {cfg.n_theta}×{cfg.n_s} · "
+            f"smooth σs={cfg.smooth_sigma_s:g}, σθ={cfg.smooth_sigma_theta:g}"
         ),
     )
