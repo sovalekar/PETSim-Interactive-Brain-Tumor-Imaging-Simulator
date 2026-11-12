@@ -22,3 +22,4 @@ venv/
 # Matplotlib / Qt
 *.mplstyle.bak
 *.log
+.venv-old/
