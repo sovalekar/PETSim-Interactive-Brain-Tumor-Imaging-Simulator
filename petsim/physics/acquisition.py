@@ -1,7 +1,6 @@
 """Acquisition session buffer and live statistics (Stage 2).
 
-Stores coincidence measurements for a future reconstruction stage without
-building sinograms or performing FBP / OSEM / ML-EM here.
+Stores coincidence measurements used by Stage 3 sinogram / FBP reconstruction.
 """
 
 from __future__ import annotations
@@ -135,8 +134,34 @@ class AcquisitionBuffer:
             return np.zeros((0, 2), dtype=np.int64)
         return np.asarray(pairs, dtype=np.int64)
 
+    def coincidence_endpoints(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return measured ring-hit endpoints ``(hits_a, hits_b)`` for coincidences.
+
+        These are the Stage 3 reconstruction inputs. True annihilation
+        coordinates are intentionally omitted.
+        """
+        pts_a = [
+            ha
+            for ha, ok in zip(self.hits_a, self.coincidence_flags, strict=True)
+            if ok
+        ]
+        pts_b = [
+            hb
+            for hb, ok in zip(self.hits_b, self.coincidence_flags, strict=True)
+            if ok
+        ]
+        if not pts_a:
+            return (
+                np.zeros((0, 2), dtype=np.float64),
+                np.zeros((0, 2), dtype=np.float64),
+            )
+        return (
+            np.asarray(pts_a, dtype=np.float64),
+            np.asarray(pts_b, dtype=np.float64),
+        )
+
     def as_arrays(self) -> dict[str, np.ndarray]:
-        """NumPy snapshot suitable for future reconstruction pipelines."""
+        """NumPy snapshot suitable for reconstruction pipelines."""
         return {
             "annihilations": np.asarray(self.annihilations, dtype=np.float64).reshape(-1, 2),
             "angles": np.asarray(self.angles, dtype=np.float64),

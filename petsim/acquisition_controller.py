@@ -7,6 +7,7 @@ GUI thread beyond consuming already-simulated results.
 
 from __future__ import annotations
 
+import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from petsim.models.detector import DetectorRing
@@ -35,6 +36,10 @@ class AcquisitionController(QObject):
         self.engine = PETEngine(self.phantom, self.ring)
         self.buffer = AcquisitionBuffer()
         self.config = AcquisitionConfig().clamp()
+        # Snapshot of the uptake map used for the current acquisition (Stage 3
+        # comparison). Cleared on reset; never used as a reconstruction input.
+        self.acquired_activity: np.ndarray | None = None
+        self.acquired_phantom_state: PhantomState | None = None
 
         self._stats = AcquisitionStats()
         self._timer = QTimer(self)
@@ -77,6 +82,11 @@ class AcquisitionController(QObject):
             # Fresh non-deterministic RNG for each new acquisition.
             self.engine.set_seed(None)
 
+        if self._stats.total_events == 0:
+            # Freeze the activity map that belongs with this dataset.
+            self.acquired_activity = self.phantom.rasterize().copy()
+            self.acquired_phantom_state = self.phantom.state.clamp()
+
         self._stats.running = True
         self._stats.paused = False
         self._stats.finished = False
@@ -101,6 +111,8 @@ class AcquisitionController(QObject):
 
     def _clear_progress(self) -> None:
         self.buffer.clear()
+        self.acquired_activity = None
+        self.acquired_phantom_state = None
         self._stats = AcquisitionStats(
             total_events=0,
             coincidences=0,
@@ -110,6 +122,10 @@ class AcquisitionController(QObject):
             paused=False,
             finished=False,
         )
+
+    def coincidence_endpoints(self) -> tuple[np.ndarray, np.ndarray]:
+        """Measured LOR endpoints for Stage 3 (no annihilation truth)."""
+        return self.buffer.coincidence_endpoints()
 
     def _on_tick(self) -> None:
         if self._stats.paused or not self._stats.running:
