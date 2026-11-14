@@ -23,7 +23,7 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 
 ## Stage 7 overview
 
-The **Detector Physics** tab adds optional detector degradation. **Enable detector effects** is off by default, so Stages 1–6 keep the ideal coincidence model (`P(coincidence) = ε²`).
+The **Detector Physics** tab adds optional detector degradation. **Enable detector effects** is off by default, so Stages 1–6 keep the ideal coincidence model (`P(coincidence) = ε²`). An acquisition keeps the detector settings it started with. Later slider changes apply to the next acquisition and do not rewrite events already stored.
 
 The tab has its own energy histogram, accepted-class bar chart, and ideal-versus-degraded image pair. Those figures are not the workstation reconstruction canvas, the MLEM convergence graph, the Stage 4 count-comparison graph, or the Stage 6 experiment plots.
 

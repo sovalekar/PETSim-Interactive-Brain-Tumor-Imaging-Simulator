@@ -229,6 +229,11 @@ class MainWindow(QMainWindow):
     def _on_detector_physics(self, config) -> None:
         self.acquisition.apply_detector_physics(config)
         self.experiments.set_detector_physics(config)
+        if self.acquisition.stats.total_events > 0:
+            self.statusBar().showMessage(
+                "Detector settings apply to the next acquisition. "
+                "Events already stored are unchanged."
+            )
 
     def _on_start(self) -> None:
         # New acquisition invalidates any previous reconstruction / analysis.
@@ -266,7 +271,12 @@ class MainWindow(QMainWindow):
         )
 
     def _on_physics_comparison_finished(self, result) -> None:
-        self.detector_physics.show_comparison(result.ideal, result.degraded)
+        try:
+            self.detector_physics.show_comparison(result.ideal, result.degraded)
+        except Exception as exc:  # noqa: BLE001 — a display error must not leave the buttons stuck
+            self.detector_physics.show_comparison_message(
+                f"Could not display the reconstruction: {exc}"
+            )
 
     def _on_reset_acq(self) -> None:
         self.acquisition.reset()

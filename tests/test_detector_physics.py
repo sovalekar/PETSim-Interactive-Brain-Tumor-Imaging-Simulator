@@ -410,6 +410,179 @@ def test_visualizations_are_independent_and_reset(qapp):
     window.close()
 
 
+def test_loaded_panel_source_does_not_read_result_method():
+    """The module Python actually imports must not contain the old failing line."""
+    import inspect
+
+    import petsim.widgets.detector_physics_panel as panel_module
+
+    source = inspect.getsource(panel_module.DetectorPhysicsPanel.show_comparison)
+    source_path = Path(panel_module.__file__).resolve()
+    on_disk = source_path.read_text(encoding="utf-8")
+    assert "ideal.method" not in source
+    assert "ideal.method" not in on_disk
+    assert "_algorithm_label" in source
+    assert source_path.name == "detector_physics_panel.py"
+
+
+def test_main_window_comparison_completion_shows_fbp_and_mlem(qapp):
+    """Drive the worker finished signal into the real window, for both algorithms."""
+    import time
+
+    window = MainWindow()
+    window.acquisition.apply_config(
+        AcquisitionConfig(
+            n_events=1000,
+            detector_efficiency=1.0,
+            animation_speed="Fast",
+            use_seed=True,
+            seed=3,
+        )
+    )
+    window.acquisition.apply_detector_physics(DetectorPhysicsConfig(enabled=False))
+    window.acquisition.engine.set_seed(3)
+    window.acquisition.start()
+    window.acquisition.pause()
+    window.acquisition._stats.running = True
+    window.acquisition._stats.paused = False
+    for _ in range(3):
+        window.acquisition._on_tick()
+    window.acquisition.pause()
+    assert window.acquisition.stats.coincidences > 10
+
+    for label, expected in (("FBP", "FBP"), ("MLEM", "MLEM")):
+        window.detector_physics._method.setCurrentText(label)
+        window.detector_physics._iterations.setCurrentText("1")
+        window._on_compare_detector_configurations()
+        deadline = time.time() + 40.0
+        while window.physics_runner.busy and time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        qapp.processEvents()
+        assert not window.physics_runner.busy, f"{label} comparison did not finish"
+        status = window.detector_physics._compare_status.text()
+        assert "AttributeError" not in status
+        assert "Could not display" not in status
+        assert "Comparison finished." in status
+        assert window.detector_physics.comparison_canvas._axes[0].get_title().startswith(
+            f"Ideal {expected}"
+        )
+        assert window.detector_physics.comparison_canvas._axes[1].get_title().startswith(
+            f"Degraded {expected}"
+        )
+        assert len(window.detector_physics.comparison_canvas._axes[0].images) == 1
+        assert len(window.detector_physics.comparison_canvas._axes[1].images) == 1
+        assert window.detector_physics._compare_btn.isEnabled()
+    window.close()
+
+
+def test_comparison_display_uses_config_method_for_fbp_and_mlem(qapp):
+    """Regression: ReconstructionResult has config.method, not result.method."""
+    del qapp
+    panel = DetectorPhysicsPanel()
+    assert panel.current_config().enabled is False
+    angles = np.linspace(0.0, 2.0 * np.pi, 24, endpoint=False)
+    hits_a = np.column_stack((0.92 * np.cos(angles), 0.92 * np.sin(angles)))
+    hits_b = -hits_a
+    shared = dict(image_size=32, n_theta=16, n_s=32, filter_name="hann")
+    fbp = reconstruct_from_endpoints(
+        hits_a, hits_b, ReconstructionConfig(method="fbp", **shared).clamp()
+    )
+    mlem = reconstruct_from_endpoints(
+        hits_a,
+        hits_b,
+        ReconstructionConfig(method="mlem", n_iterations=2, **shared).clamp(),
+    )
+    assert not hasattr(fbp, "method")
+    assert fbp.config.method == "fbp"
+    assert mlem.config.method == "mlem"
+    assert fbp.image.shape == (32, 32)
+    assert mlem.image.shape == (32, 32)
+    assert np.isfinite(fbp.image).all() and np.isfinite(mlem.image).all()
+
+    panel.show_comparison(fbp, fbp)
+    assert panel.comparison_canvas._axes[0].get_title().startswith("Ideal FBP")
+    assert panel.comparison_canvas._axes[1].get_title().startswith("Degraded FBP")
+    assert panel.comparison_canvas._axes[0].images
+    assert panel.comparison_canvas._axes[1].images
+    assert panel._compare_btn.isEnabled()
+    assert not panel._cancel_compare_btn.isEnabled()
+
+    panel.show_comparison(mlem, mlem)
+    assert "MLEM" in panel.comparison_canvas._axes[0].get_title()
+    assert "MLEM" in panel.comparison_canvas._axes[1].get_title()
+    assert "Comparison finished." in panel._compare_status.text()
+
+
+def test_comparison_display_failure_does_not_stick_the_buttons(qapp):
+    del qapp
+    panel = DetectorPhysicsPanel()
+
+    class Broken:
+        n_coincidences = 3
+        message = "computed"
+        cancelled = False
+        config = ReconstructionConfig(method="fbp")
+
+        @property
+        def image(self):
+            raise RuntimeError("display failed")
+
+    panel.show_comparison_busy("Reconstructing…")
+    panel.show_comparison(Broken(), Broken())
+    assert panel._compare_btn.isEnabled()
+    assert not panel._cancel_compare_btn.isEnabled()
+    assert "display failed" in panel._compare_status.text()
+    assert len(panel.comparison_canvas._axes[0].images) == 0
+
+
+def test_slider_changes_do_not_rewrite_the_current_acquisition(qapp):
+    del qapp
+    controller = AcquisitionController()
+    controller.apply_config(
+        AcquisitionConfig(
+            n_events=1000,
+            detector_efficiency=1.0,
+            animation_speed="Fast",
+            use_seed=True,
+            seed=9,
+        )
+    )
+    controller.apply_detector_physics(
+        DetectorPhysicsConfig(
+            enabled=True,
+            energy_fwhm_percent=0.0,
+            timing_fwhm_ps=0.0,
+            timing_window_ps=20000.0,
+            random_fraction=1.0,
+            scatter_probability=0.0,
+        )
+    )
+    controller.engine.set_seed(9)
+    controller.start()
+    controller.pause()
+    assert controller._active_physics is not None
+    assert controller._active_physics.random_fraction == 1.0
+    controller.apply_detector_physics(DetectorPhysicsConfig(enabled=False, random_fraction=0.0))
+    controller._stats.paused = False
+    controller._stats.running = True
+    controller._on_tick()
+    assert controller.stats.effects_enabled is True
+    assert controller.stats.random_coincidences == 25
+    stored = controller.coincidence_endpoints()[0].copy()
+    controller._complete()
+    controller.apply_detector_physics(
+        DetectorPhysicsConfig(enabled=False, energy_fwhm_percent=30.0, random_fraction=0.0)
+    )
+    assert controller.stats.effects_enabled is True
+    assert controller.stats.random_coincidences == 25
+    assert np.array_equal(controller.coincidence_endpoints()[0], stored)
+    controller.reset()
+    assert controller.stats.total_events == 0
+    assert controller.stats.effects_enabled is False
+    assert controller._active_physics is None
+
+
 def test_comparison_worker_drops_a_result_after_reset(qapp):
     app = qapp
     runner = PhysicsComparisonRunner()

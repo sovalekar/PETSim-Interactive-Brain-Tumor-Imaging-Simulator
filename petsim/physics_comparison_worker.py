@@ -155,6 +155,10 @@ class PhysicsComparisonRunner(QObject):
         self.finished.emit(result)
 
     def _on_failed(self, message: str) -> None:
+        task = self._task
+        job_id = getattr(task, "_job_id", None)
+        if job_id is not None and not self.accepts(job_id):
+            return
         self.failed.emit(message)
 
     def _cleanup(self) -> None:

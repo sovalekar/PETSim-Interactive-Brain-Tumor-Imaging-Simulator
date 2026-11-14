@@ -167,6 +167,20 @@ class IdealDegradedCanvas(FigureCanvasQTAgg):
         self.draw_idle()
 
 
+def _algorithm_label(result: ReconstructionResult) -> str:
+    """Read FBP or MLEM from the reconstruction config."""
+    config = getattr(result, "config", None)
+    method = getattr(config, "method", "")
+    if not isinstance(method, str):
+        return "Reconstruction"
+    normalized = method.lower().strip()
+    if normalized == "mlem":
+        return "MLEM"
+    if normalized == "fbp":
+        return "FBP"
+    return "Reconstruction"
+
+
 def _slider_row(slider: QSlider, readout: QLabel) -> QWidget:
     row = QWidget()
     layout = QHBoxLayout(row)
@@ -389,25 +403,43 @@ class DetectorPhysicsPanel(QWidget):
         )
 
     def show_comparison(self, ideal: ReconstructionResult, degraded: ReconstructionResult) -> None:
+        """Draw the two reconstructed images and always return the buttons to idle.
+
+        The algorithm name is ``result.config.method``. ``ReconstructionResult``
+        itself has no ``method`` attribute.
+        """
         self._cancel_compare_btn.setEnabled(False)
         self._compare_btn.setEnabled(True)
-        if ideal.image.size == 0 and degraded.image.size == 0:
-            self.comparison_canvas.show_placeholder("No endpoints were available to reconstruct.")
-            self._compare_status.setText(ideal.message or degraded.message or "Nothing to reconstruct.")
-            return
-        method = ideal.method.upper()
-        self.comparison_canvas.show_pair(
-            ideal.image,
-            degraded.image,
-            ideal_title=f"Ideal {method} ({ideal.n_coincidences:,} pairs)",
-            degraded_title=f"Degraded {method} ({degraded.n_coincidences:,} pairs)",
-        )
-        note = "Comparison finished."
-        if ideal.cancelled or degraded.cancelled:
-            note = "Comparison cancelled. Partial images are shown only if that reconstruction finished."
-        self._compare_status.setText(
-            f"{note} {ideal.message} {degraded.message}".strip()
-        )
+        try:
+            ideal_image = np.asarray(ideal.image)
+            degraded_image = np.asarray(degraded.image)
+            if ideal_image.size == 0 and degraded_image.size == 0:
+                self.comparison_canvas.show_placeholder("No endpoints were available to reconstruct.")
+                self._compare_status.setText(
+                    ideal.message or degraded.message or "Nothing to reconstruct."
+                )
+                return
+            method = _algorithm_label(ideal)
+            self.comparison_canvas.show_pair(
+                ideal_image,
+                degraded_image,
+                ideal_title=f"Ideal {method} ({int(ideal.n_coincidences):,} pairs)",
+                degraded_title=f"Degraded {method} ({int(degraded.n_coincidences):,} pairs)",
+            )
+            note = "Comparison finished."
+            if ideal.cancelled or degraded.cancelled:
+                note = (
+                    "Comparison cancelled. Images are shown only for the "
+                    "reconstruction that actually finished."
+                )
+            self._compare_status.setText(
+                f"{note} {ideal.message} {degraded.message}".strip()
+            )
+        except Exception as exc:  # noqa: BLE001 — keep the panel usable after a display failure
+            self.comparison_canvas.show_placeholder(
+                "The comparison images could not be drawn."
+            )
+            self._compare_status.setText(f"Could not display the reconstruction: {exc}")
 
     def show_comparison_busy(self, message: str) -> None:
         self._compare_btn.setEnabled(False)

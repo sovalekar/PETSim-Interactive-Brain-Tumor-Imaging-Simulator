@@ -38,6 +38,8 @@ class AcquisitionController(QObject):
         self.buffer = AcquisitionBuffer()
         self.config = AcquisitionConfig().clamp()
         self.physics = DetectorPhysicsConfig()
+        # Frozen copy used by the acquisition currently in the buffer.
+        self._active_physics: DetectorPhysicsConfig | None = None
         # Snapshot of the uptake map used for the current acquisition (Stage 3
         # comparison). Cleared on reset; never used as a reconstruction input.
         self.acquired_activity: np.ndarray | None = None
@@ -71,11 +73,16 @@ class AcquisitionController(QObject):
             self._emit_stats()
 
     def apply_detector_physics(self, config: DetectorPhysicsConfig) -> None:
-        """Store Stage 7 settings for later annihilation batches."""
+        """Store settings for the next acquisition.
+
+        Events already in the buffer keep the physics snapshot taken when
+        that acquisition started. Slider changes do not rewrite them.
+        """
         self.physics = config.clamp()
-        self._stats.effects_enabled = self.physics.enabled
-        if not self._stats.running:
-            self._emit_stats()
+        if self._active_physics is None and self._stats.total_events == 0:
+            self._stats.effects_enabled = self.physics.enabled
+            if not self._stats.running:
+                self._emit_stats()
 
     def start(self) -> None:
         cfg = self.config.clamp()
@@ -92,9 +99,11 @@ class AcquisitionController(QObject):
             self.engine.set_seed(None)
 
         if self._stats.total_events == 0:
-            # Freeze the activity map that belongs with this dataset.
+            # Freeze the activity map and detector settings for this dataset.
             self.acquired_activity = self.phantom.rasterize().copy()
             self.acquired_phantom_state = self.phantom.state.clamp()
+            self._active_physics = self.physics.clamp()
+            self._stats.effects_enabled = self._active_physics.enabled
 
         self._stats.running = True
         self._stats.paused = False
@@ -122,6 +131,7 @@ class AcquisitionController(QObject):
         self.buffer.clear()
         self.acquired_activity = None
         self.acquired_phantom_state = None
+        self._active_physics = None
         self._stats = AcquisitionStats(
             total_events=0,
             coincidences=0,
@@ -154,10 +164,11 @@ class AcquisitionController(QObject):
             return
 
         batch_n = min(self.config.events_per_tick(), remaining)
+        physics = self._active_physics if self._active_physics is not None else self.physics
         events: list[AnnihilationEvent] = self.engine.simulate_batch(
             batch_n,
             detector_efficiency=self.config.detector_efficiency,
-            physics=self.physics,
+            physics=physics,
         )
         n_coin = self.buffer.extend(events)
         accounted = account_events(events)
@@ -170,7 +181,7 @@ class AcquisitionController(QObject):
         self._stats.random_coincidences += accounted.accepted_random
         self._stats.energy_rejected += accounted.energy_rejected
         self._stats.timing_rejected += accounted.timing_rejected
-        self._stats.effects_enabled = self.physics.enabled
+        self._stats.effects_enabled = physics.enabled
         self._stats.detector_efficiency = self.config.detector_efficiency
         self._stats.target_events = self.config.n_events
 
