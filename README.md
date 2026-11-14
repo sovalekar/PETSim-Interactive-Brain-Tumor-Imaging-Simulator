@@ -3,7 +3,7 @@
 Educational desktop workstation for **computational simulation of brain-tumor PET imaging**.  
 Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**.
 
-> **Not a clinical diagnostic tool.**
+> **Not a clinical diagnostic tool.** Stage 4 metrics are educational reconstruction-quality measures, not calibrated clinical PET quantities (SUV, Bq/mL, or validated detectability indices).
 
 ---
 
@@ -12,12 +12,232 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | Stage | Status | Contents |
 | --- | --- | --- |
 | **1** | Done | Dark three-panel UI, adjustable brain/tumor phantom, 48-crystal ring |
-| **2** | Done (v0.2.0) | Annihilation sampling, 511 keV back-to-back photons, efficiency, coincidences, LOR animation |
-| **3** | **This release (v0.3.0)** | Measured sinogram from coincidences + filtered backprojection (FBP) |
+| **2** | Done | Annihilation sampling, 511 keV back-to-back photons, efficiency, coincidences, LOR animation |
+| **3** | Done | Measured sinogram from coincidences + filtered backprojection (FBP) |
+| **4** | Done | Tumor localization, TBR / contrast / background CV, coincidence-count comparison |
+| **5** | Done | MLEM iterative reconstruction, convergence, and FBP comparison |
+| **6** | Done | Repeated image-quality experiments versus coincidence count |
+| **7** | **This release (v0.7.0)** | Energy resolution, timing window, randoms, and simplified Compton scatter |
 
 ---
 
-## Stage 3 overview
+## Stage 7 overview
+
+The **Detector Physics** tab adds optional detector degradation. **Enable detector effects** is off by default, so Stages 1–6 keep the ideal coincidence model (`P(coincidence) = ε²`). An acquisition keeps the detector settings it started with. Later slider changes apply to the next acquisition and do not rewrite events already stored.
+
+The tab has its own energy histogram, accepted-class bar chart, and ideal-versus-degraded image pair. Those figures are not the workstation reconstruction canvas, the MLEM convergence graph, the Stage 4 count-comparison graph, or the Stage 6 experiment plots.
+
+### Units and scale
+
+| Quantity | Unit | Definition |
+| --- | --- | --- |
+| Photon energy | keV | 511 keV before detector blur or Compton loss |
+| Energy resolution | percent | FWHM at 511 keV |
+| Time | ps | picoseconds |
+| Ring scale | cm | normalized radius 0.92 represents 15 cm |
+| Speed of light | cm/ps | 0.0299792458 |
+
+### Energy
+
+\[
+\mathrm{FWHM}_E = 511\,\mathrm{keV}\times\frac{\mathrm{percent}}{100},
+\quad
+\sigma_E = \frac{\mathrm{FWHM}_E}{2\sqrt{2\ln 2}}
+\]
+
+Measured energy is Gaussian about the true photon energy and clipped at 0 keV. Both photons must lie in \([E_\mathrm{low}, E_\mathrm{high}]\). The histogram draws those two bounds.
+
+### Timing
+
+Path length is converted from FOV units to centimetres with the 15 cm ring scale, then divided by \(c\).
+
+\[
+\Delta t_\mathrm{flight} = t_A - t_B
+\]
+
+\[
+\Delta t_\mathrm{residual} \sim \mathcal{N}(0, \sigma_\mathrm{CTR}^2),
+\quad
+\sigma_\mathrm{CTR} = \frac{\mathrm{FWHM}_\mathrm{CTR}}{2\sqrt{2\ln 2}}
+\]
+
+\[
+\Delta t_\mathrm{measured} = \Delta t_\mathrm{flight} + \Delta t_\mathrm{residual}
+\]
+
+\(\mathrm{FWHM}_\mathrm{CTR}\) is the full width of the detector contribution to the **time difference**, not the width of one crystal. Geometric correction means subtracting the true flight time:
+
+\[
+\Delta t_\mathrm{residual} = \Delta t_\mathrm{measured} - \Delta t_\mathrm{flight}
+\]
+
+That subtraction uses the simulated path lengths. A coincidence processor does not know the annihilation point, so it cannot do it. **The acceptance window is applied to \(|\Delta t_\mathrm{measured}|\)**, not to the flight time and not to the residual. Timing is an accept/reject cut only. There is no time-of-flight reconstruction.
+
+### Random coincidences
+
+`random fraction` is the probability that one annihilation also adds one accepted coincidence between two distinct, uniformly chosen crystals. The endpoints are crystal centers. They are not a back-to-back line from the tumor or from that annihilation.
+
+### Compton scatter
+
+Each photon scatters at most once, with the chosen probability. The site is 20–80% of the way along the original chord. The in-plane deflection \(\phi\) is Gaussian (default standard deviation 0.6 rad). Energy follows
+
+\[
+E' = \frac{E}{1 + (E/511\,\mathrm{keV})(1-\cos\phi)}
+\]
+
+and then the energy resolution and energy window. This is not Klein–Nishina sampling, not attenuation, and not a validated patient-scatter simulation.
+
+### Event accounting
+
+These bins do not overlap:
+
+* generated annihilations
+* detected singles (exactly one photon passed the efficiency draw)
+* undetected (neither photon passed efficiency)
+* accepted unscattered coincidences
+* accepted scattered coincidences
+* energy-window rejections
+* timing-window rejections
+
+Every annihilation is in exactly one of those bins. A pair that fails the energy window is an energy rejection even if its measured time difference is also outside the timing window. Random coincidences are extra accepted events, not annihilations.
+
+\[
+N_\mathrm{accepted} = N_\mathrm{true} + N_\mathrm{scattered} + N_\mathrm{random}
+\]
+
+Workstation **Reconstruct** and both FBP and MLEM receive only accepted ring hits: true, scattered, and random. They do not receive tumor coordinates. The ideal-versus-degraded view reconstructs efficiency-detected pre-scatter hits beside those accepted hits, with the same algorithm.
+
+### Experiments
+
+On **Image Quality Experiments**, **Apply Detector Physics tab settings** is unchecked by default. The experiment then ignores the physics tab and keeps the ideal model.
+
+If you check it, the tab’s settings are copied at start and written into the CSV metadata (`detector_effects_applied` and each parameter). The coincidence target then counts accepted events, including scatter and randoms. FBP and MLEM in one trial still share that list.
+
+---
+
+## Stage 6 overview
+
+The **Image Quality Experiments** tab runs repeated acquisitions and reconstructions without using the tumor location as a reconstruction input.
+
+For each selected detected-coincidence target (default 1,000, 3,000, 5,000, 10,000, and 20,000) and each independent trial:
+
+1. Annihilations are simulated with the current phantom until that many coincidences are recorded.
+2. Exactly that prefix is reconstructed with FBP, MLEM, or both. A shared trial seed means both methods see the same coincidences.
+3. Stage 4 metrics are stored: localization error (FOV), tumor-to-background ratio, relative contrast, background coefficient of variation, runtime, and MLEM iteration count.
+
+The table and plots report the **mean and sample standard deviation across trials**. That spread is acquisition variability inside this simulator. It is not the MLEM convergence curve and it is not a clinical error bar. FBP still may pre-smooth the sinogram; MLEM uses unsmoothed counts. Neither method is assumed to win every metric.
+
+### Run an experiment
+
+1. Set the phantom on the Workstation tab.  
+2. Open **Image Quality Experiments**.  
+3. Choose methods, count levels, trials, seed, MLEM iterations, FBP filter, and detector efficiency.  
+4. Click **Start Experiment**. Cancel stops between steps and keeps finished trials. **Reset Results** clears the table and plots.  
+5. **Export CSV and PNG** writes `trials.csv`, `aggregates.csv`, and one PNG per plot. Comment lines in the CSV files record the seed, phantom, counts, filter, iterations, and the FBP/MLEM preprocessing difference.
+
+Example: seed `1`, both methods, 3 trials, counts 1,000 and 3,000, Hann filter, 10 MLEM iterations. Compare the error bars before treating a single run as typical.
+
+---
+
+## Stage 5 overview
+
+Stage 5 adds **maximum-likelihood expectation maximization (MLEM)** next to filtered backprojection. Both algorithms consume the same measured coincidence list. MLEM does not use the tumor’s true position.
+
+### FBP versus MLEM
+
+FBP filters each projection with a ramp (optionally Hann-windowed) and backprojects once. It is fast and linear, and it can produce negative pixels. With few coincidences the ramp amplifies noise, which is why the FBP path still applies a light sinogram smooth.
+
+MLEM iteratively updates a nonnegative image so that its predicted sinogram better matches the measured counts under a Poisson model:
+
+\[
+x^{k+1}_j = \frac{x^k_j}{\sum_i A_{ij}} \sum_i \frac{A_{ij}\, y_i}{\sum_l A_{il} x^k_l}
+\]
+
+`A` is a pixel-driven parallel-beam projector (linear interpolation in `s`) and `Aᵀ` is the matching backprojector. They are adjoints; neither is the FBP operator. Sensitivity `Σ_i A_ij` normalizes the update. Zero-sensitivity pixels stay at 0. Bins with predicted counts of 0 contribute nothing to the ratio; if those bins also contain counts, the Poisson log-likelihood is undefined.
+
+The tracked objective is
+
+\[
+L(x) = \sum_i \big(y_i \log \hat y_i - \hat y_i\big)
+\]
+
+with `ŷ = Ax`, omitting the constant `Σ log(y!)`. Relative change is `‖xⁿ − xⁿ⁻¹‖ / ‖xⁿ⁻¹‖`. More iterations usually raise `L` and can look smoother, but they are not guaranteed to improve localization error, contrast, or background CV on one noisy realization. Early iterates are blurry; later iterates fit noise. That is expected for this simplified model (no attenuation, scatter, or randoms).
+
+### Using Stage 5
+
+1. Acquire coincidences as in Stages 2–3.  
+2. In **Method**, choose **Filtered Backprojection (FBP)** or **Maximum Likelihood EM (MLEM)**.  
+3. FBP still uses **Filter** (Hann or Ramp). MLEM shows **Iterations** (1, 5, 10, 20, 50; default 10) and hides the FBP filter.  
+4. **Run Reconstruction** updates the PET image canvas only. MLEM also fills the separate convergence canvas and can be cancelled between iterations.  
+5. **Compare FBP and MLEM** reconstructs both from the same coincidences and switches the image view to **FBP vs MLEM**.  
+6. **Shared intensity scale** forces one display maximum for that pair. Independent scaling is the default. Metrics always use nonnegative reconstructed values, not the display scale.  
+7. The FBP-versus-MLEM table reports localization error (FOV), TBR, relative contrast, background CV, runtime, and the MLEM iteration count.  
+8. The Stage 4 count-comparison graph stays on its own canvas. That comparison still uses FBP.
+
+### Reproduce a comparison
+
+Use a fixed acquisition seed, the same event count and detector efficiency, then **Compare FBP and MLEM** at 10 iterations with the Hann FBP filter. Repeat with 1 and 50 iterations to see the likelihood rise without assuming every metric improves.
+
+---
+
+## Stage 4 overview
+
+After Stage 3 reconstruction, PETSim can quantitatively evaluate the reconstructed image against the phantom settings that generated the acquisition:
+
+1. **Tumor localization accuracy** — estimate the tumor center from the reconstructed image and compare it with the known phantom center.  
+2. **Tumor-to-background contrast** — ROI means, TBR, relative contrast, and background coefficient of variation.  
+3. **Image quality vs coincidence count** — rebuild nested prefixes of the same coincidence list at 1k / 3k / 5k / 10k detected coincidences and tabulate metrics.
+
+Workflow:
+
+1. Enable a tumor and set a known center.  
+2. Run an acquisition (prefer enough events to reach several thousand coincidences).  
+3. **Run Reconstruction**.  
+4. In **Quantitative Analysis**, click **Run Analysis**.  
+5. Optionally click **Count Comparison**. The CV graph appears in its own section and leaves the reconstructed image in place.  
+6. Resetting acquisition, clearing reconstruction, changing the phantom, or changing the FBP filter clears stale metrics.
+
+### Tumor localization
+
+Method: **constrained intensity-weighted centroid** on nonnegative reconstructed intensities.
+
+1. Restrict the search to the circular brain disk (phantom *radius* only — not the tumor center).  
+2. Find the brightest pixel in that region (coarse peak).  
+3. Compute an intensity-weighted centroid in a local neighborhood around the peak.  
+4. Convert the centroid to FOV coordinates using the same pixel-center grid as FBP (`linspace(-fov, fov, N)`, row↔y, col↔x).
+
+Localization error:
+
+\[
+\sqrt{(x_\mathrm{est}-x_\mathrm{true})^2 + (y_\mathrm{est}-y_\mathrm{true})^2}
+\]
+
+reported in FOV units. The estimate comes from reconstructed image data only; ground-truth coordinates are used for error evaluation (and ROI placement below), never to invent the estimate. If the tumor is disabled or the search region has no positive intensity, the GUI shows an explanatory message instead of a fabricated measurement.
+
+### Tumor / background ROIs and contrast
+
+Intensity basis (documented and consistent): **nonnegative display-clipped** reconstructed values `max(image, 0)`. Raw FBP negatives are excluded so background means are not artificially lowered. These are relative reconstruction units — **not** clinical activity concentrations.
+
+* **Tumor ROI**: circle at the documented ground-truth tumor center with radius `tumor_radius`.  
+* **Background ROI**: annulus around the same center with inner radius `1.5 × tumor_radius` and width `0.12` FOV units, clipped to the brain disk and excluding tumor pixels.
+
+Metrics:
+
+* \(\mathrm{TBR} = \mu_\mathrm{tumor} / \mu_\mathrm{background}\)  
+* \(\mathrm{Contrast} = (\mu_\mathrm{tumor} - \mu_\mathrm{background}) / \mu_\mathrm{background}\)  
+* \(\mathrm{Background\ CV} = \sigma_\mathrm{background} / \mu_\mathrm{background}\)
+
+Background CV is a variability measure; it is **not** automatically labeled tumor SNR. Zero / negative / NaN background means yield invalid ratios with a clear message. Tiny or empty ROIs are flagged.
+
+### Coincidence-count comparison
+
+Target levels are **detected coincidence counts**: 1000, 3000, 5000, 10000.
+
+PETSim takes nested prefixes of the current measured coincidence list (the first N events), rebuilds the sinogram, runs FBP with the same settings, and recomputes localization error, TBR, and background CV. Levels above the available coincidence total are marked unavailable — events are never fabricated. Individual random realizations need not improve monotonically.
+
+---
+
+## Stage 3 overview (still included)
 
 Workflow:
 
@@ -26,7 +246,7 @@ Workflow:
 3. Click **Run Reconstruction**.  
 4. PETSim bins measured LORs into a sinogram \(p(\theta, s)\).  
 5. PETSim applies **filtered backprojection** to form a \(128\times 128\) activity image.  
-6. View **Reconstructed Image**, **Sinogram**, or **Comparison** (acquired phantom vs FBP).
+6. View **Reconstructed Image**, **Sinogram**, or **Comparison**. The coincidence-count graph uses its own canvas below the metrics and does not replace the PET image.
 
 Reconstruction uses **only coincidence endpoints** (detector-ring hits). True annihilation positions are never reconstruction inputs.
 
@@ -41,29 +261,11 @@ x\cos\theta + y\sin\theta = s
 - \(\theta \in [0,\pi)\): angle of the LOR normal  
 - \(s\): signed perpendicular distance from the scanner center  
 
-Events are binned on a default grid of **180 angular × 128 radial** bins (ring radius \(s_{\max}=0.92\)).  
-The sinogram is accumulated from **simulated detector measurements**, not from a Radon transform of the ground-truth phantom.
+Default educational grid: **96 angular × 128 radial** bins (ring radius \(s_{\max}=0.92\)), with mild Gaussian pre-smoothing before FBP.
 
 ### Filtered backprojection (FBP)
 
-1. Optionally apply a **mild Gaussian pre-smooth** in sinogram space (default
-   \(\sigma_s=1.5\), \(\sigma_\theta=0.75\) bins). With only a few thousand
-   coincidences, an unsmoothed sinogram is nearly empty; FBP then draws bright
-   radial streaks for each occupied bin. Smoothing spreads **measured** counts
-   only — it does not copy the phantom.
-2. For each angle, FFT the radial profile (with zero-padding).  
-3. Multiply by the **ramp** filter \(|\omega|\), preferably with a **Hann** window (default).  
-4. Inverse FFT → filtered projections \(q(s,\theta)\).  
-5. Backproject with linear interpolation:
-
-\[
-f(x,y) \approx \frac{\pi}{N_\theta}\sum_{\theta} q(x\cos\theta + y\sin\theta,\,\theta)
-\]
-
-Default grid is **96×128** (angular × radial), adjusted for the 48-crystal ring.  
-Negatives from filter ringing are kept in the raw array; the display uses a
-non-negative view with **percentile windowing** (≈99.5%) so a few streak spikes
-do not wash out the brain/tumor.
+Default Hann-windowed ramp filter; negatives from ringing are kept in the raw array and clipped only for display (percentile windowing ≈99.5%).
 
 ### Model assumptions (still idealized)
 
@@ -79,13 +281,24 @@ do not wash out the brain/tumor.
 petsim/
 ├── acquisition_controller.py
 ├── reconstruction_worker.py      # QThread FBP worker
+├── analysis_worker.py            # QThread Stage 4 analysis worker
+├── experiment_worker.py          # QThread Stage 6 experiments
+├── experiments/                  # Acquisition repeats, metrics, CSV export
 ├── models/                       # Phantom + detector geometry
 ├── physics/                      # Stage 2 acquisition engine
-├── reconstruction/               # Stage 3 (Qt-free)
-│   ├── lor.py                    # Endpoints → (θ, s)
-│   ├── sinogram.py               # Binning + analytic fixtures
-│   ├── fbp.py                    # Ramp / Hann FBP
-│   └── pipeline.py               # End-to-end reconstruct_from_endpoints
+├── reconstruction/               # Stage 3 FBP + Stage 5 MLEM (Qt-free)
+│   ├── lor.py
+│   ├── sinogram.py
+│   ├── fbp.py
+│   ├── projectors.py             # Adjoint forward / back projectors
+│   ├── mlem.py
+│   └── pipeline.py
+├── analysis/                     # Stage 4 (Qt-free)
+│   ├── coordinates.py            # Pixel ↔ FOV
+│   ├── localization.py           # Constrained centroid
+│   ├── roi.py                    # TBR / contrast / CV
+│   ├── count_comparison.py       # Nested count levels
+│   └── pipeline.py               # analyze_reconstruction
 └── widgets/                      # Controls, detector view, recon panel
 tests/
 ```
@@ -111,17 +324,21 @@ pip install -e ".[dev]"            # pytest
 
 ```bash
 python -m petsim
+# or
+./.venv/bin/python -m petsim
 ```
 
-### Acquisition + reconstruction
+### Acquisition + reconstruction + analysis
 
-1. Set tumor / brain parameters.  
+1. Set tumor / brain parameters (enable tumor; note the true center).  
 2. Choose event count, detector efficiency, optional seed; click **Start Acquisition**.  
-3. Wait until acquisition completes (or pause mid-run — reconstruction uses recorded coincidences so far).  
+3. Wait until acquisition completes (or pause — reconstruction uses recorded coincidences so far).  
 4. In the right panel: choose Filter (**Ramp** / **Hann**), Display mode, colormap.  
 5. Click **Run Reconstruction**.  
-6. Inspect the image, sinogram, or side-by-side comparison.  
-7. Changing the phantom **clears** acquisition and reconstruction so datasets are never mixed.
+6. Click **Run Analysis** — inspect localization, TBR, contrast, and background CV.  
+7. Optionally enable **Overlay tumor / background ROIs**.  
+8. Click **Count Comparison** for the 1k–10k table and the separate CV plot.  
+9. Changing the phantom **clears** acquisition, reconstruction, and analysis so datasets are never mixed.
 
 ---
 
@@ -133,6 +350,9 @@ pip install -e ".[dev]"
 # Linux / CI (headless):
 QT_QPA_PLATFORM=offscreen python -m pytest -q
 
+# Project interpreter:
+./.venv/bin/python -m pytest -q
+
 # macOS (use cocoa — matches a working PETSim GUI):
 QT_QPA_PLATFORM=cocoa python -m pytest -q
 ```
@@ -143,17 +363,25 @@ the desktop app uses. ``tests/conftest.py`` therefore defaults Darwin to ``cocoa
 remaps ``offscreen``/``minimal`` → ``cocoa`` (an explicit ``cocoa`` choice is preserved).
 ``MainWindow`` checks still run in a subprocess so a plugin abort cannot kill parent pytest.
 
-Coverage includes LOR \(\leftrightarrow (\theta,s)\) conversion, sinogram binning, deterministic seeds, empty data, FBP shape/finiteness, an **analytic disk / point-source** projection test (independent of the PET geometry converter), tumor-location sensitivity, and UI state management.
+Coverage includes LOR \(\leftrightarrow (\theta,s)\) conversion, sinogram binning, FBP,
+pixel↔FOV coordinates, synthetic-blob localization, ROI / TBR / CV edge cases,
+coincidence-count comparison, analysis invalidation, and Stage 2–3 regression tests.
 
 ---
 
 ## Known limitations
 
-- Educational model only — not clinically accurate  
-- Coarse 48-detector geometry + a few thousand coincidences → residual streaks even after Hann smoothing  
+- Educational model only — not clinically accurate or validated for patient imaging  
+- Coarse 48-detector geometry + finite counts → residual streaks and localization scatter  
 - No attenuation correction, scatter, randoms, or iterative methods (OSEM / ML-EM)  
-- Comparison phantom is the activity map frozen at acquisition start  
-- Very low counts (≲2k coincidences) remain noisy; prefer ≥5k annihilations at high efficiency for demos  
+- ROI geometry uses phantom ground truth for evaluation; localization estimates do not  
+- Count-comparison curves are single-realization nested prefixes — not ensemble averages  
+- Very low counts remain noisy; prefer ≥5k coincidences for stable demos  
+- MLEM uses an unsmoothed sinogram; FBP may pre-smooth. Same coincidences, different preprocessing  
+- Extra MLEM iterations can fit noise; they do not guarantee better localization or contrast  
+- Default MLEM is 10 iterations on a 128×128 grid with the 96×128 sinogram  
+- Experiment error bars are across independent simulated acquisitions in this simplified model  
+- Large count levels with several MLEM trials take longer; cancel leaves completed trials in the table  
 
 ---
 

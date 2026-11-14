@@ -308,11 +308,18 @@ class ControlsPanel(QFrame):
 
     def update_stats(self, stats: AcquisitionStats) -> None:
         self._stat_total.setText(f"Annihilations: {stats.total_events:,}")
-        self._stat_coin.setText(f"Coincidences: {stats.coincidences:,}")
-        self._stat_rate.setText(
-            f"Coincidence rate: {stats.coincidence_percent:.1f}% "
-            f"(expected ε²: {stats.expected_coincidence_percent:.1f}%)"
-        )
+        if stats.effects_enabled:
+            self._stat_coin.setText(f"Accepted coincidences: {stats.coincidences:,}")
+            self._stat_rate.setText(
+                f"Accepted fraction: {stats.coincidence_percent:.1f}% "
+                f"(ε² {stats.expected_coincidence_percent:.1f}% is the ideal rate)"
+            )
+        else:
+            self._stat_coin.setText(f"Coincidences: {stats.coincidences:,}")
+            self._stat_rate.setText(
+                f"Coincidence rate: {stats.coincidence_percent:.1f}% "
+                f"(expected ε²: {stats.expected_coincidence_percent:.1f}%)"
+            )
         self._stat_progress.setText(f"Progress: {stats.progress_percent:.1f}%")
 
         # Button enablement mirrors acquisition state.

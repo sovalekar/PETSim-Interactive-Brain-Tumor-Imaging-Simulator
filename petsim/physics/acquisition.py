@@ -52,6 +52,14 @@ class AcquisitionStats:
     running: bool = False
     paused: bool = False
     finished: bool = False
+    effects_enabled: bool = False
+    detected_singles: int = 0
+    undetected: int = 0
+    accepted_unscattered: int = 0
+    scattered_coincidences: int = 0
+    random_coincidences: int = 0
+    energy_rejected: int = 0
+    timing_rejected: int = 0
 
     @property
     def coincidence_percent(self) -> float:
@@ -88,6 +96,12 @@ class AcquisitionBuffer:
     detected_a: list[bool] = field(default_factory=list)
     detected_b: list[bool] = field(default_factory=list)
     coincidence_flags: list[bool] = field(default_factory=list)
+    ideal_hits_a: list[tuple[float, float]] = field(default_factory=list)
+    ideal_hits_b: list[tuple[float, float]] = field(default_factory=list)
+    energy_a_kev: list[float] = field(default_factory=list)
+    energy_b_kev: list[float] = field(default_factory=list)
+    is_random: list[bool] = field(default_factory=list)
+    is_scattered: list[bool] = field(default_factory=list)
 
     def clear(self) -> None:
         self.annihilations.clear()
@@ -99,14 +113,27 @@ class AcquisitionBuffer:
         self.detected_a.clear()
         self.detected_b.clear()
         self.coincidence_flags.clear()
+        self.ideal_hits_a.clear()
+        self.ideal_hits_b.clear()
+        self.energy_a_kev.clear()
+        self.energy_b_kev.clear()
+        self.is_random.clear()
+        self.is_scattered.clear()
 
     def __len__(self) -> int:
         return len(self.annihilations)
 
+    def n_annihilations(self) -> int:
+        """Generated annihilations, excluding appended random coincidences."""
+        if not self.is_random:
+            return len(self.annihilations)
+        return sum(1 for flag in self.is_random if not flag)
+
     def extend(self, events: list[AnnihilationEvent]) -> int:
-        """Append events; return how many were coincidences."""
+        """Append events; return how many were accepted coincidences."""
         n_coin = 0
         for ev in events:
+            ideal_a, ideal_b = ev.ideal_endpoints
             self.annihilations.append(ev.annihilation_xy)
             self.angles.append(ev.angle)
             self.hits_a.append(ev.hit_a_xy)
@@ -115,6 +142,12 @@ class AcquisitionBuffer:
             self.detectors_b.append(ev.detector_b)
             self.detected_a.append(ev.detected_a)
             self.detected_b.append(ev.detected_b)
+            self.ideal_hits_a.append(ideal_a)
+            self.ideal_hits_b.append(ideal_b)
+            self.energy_a_kev.append(float(ev.energy_a_kev))
+            self.energy_b_kev.append(float(ev.energy_b_kev))
+            self.is_random.append(bool(ev.is_random))
+            self.is_scattered.append(bool(ev.is_scattered))
             is_coin = ev.is_coincidence
             self.coincidence_flags.append(is_coin)
             if is_coin:
@@ -159,6 +192,52 @@ class AcquisitionBuffer:
             np.asarray(pts_a, dtype=np.float64),
             np.asarray(pts_b, dtype=np.float64),
         )
+
+    def ideal_coincidence_endpoints(self) -> tuple[np.ndarray, np.ndarray]:
+        """Ring hits before scatter, for efficiency-detected non-random pairs.
+
+        These are the ideal-detector measurements of the same annihilations.
+        Accepted random coincidences are omitted. Annihilation coordinates are
+        not returned.
+        """
+        pts_a = []
+        pts_b = []
+        for ideal_a, ideal_b, det_a, det_b, is_random in zip(
+            self.ideal_hits_a,
+            self.ideal_hits_b,
+            self.detected_a,
+            self.detected_b,
+            self.is_random,
+            strict=True,
+        ):
+            if is_random or not (det_a and det_b):
+                continue
+            pts_a.append(ideal_a)
+            pts_b.append(ideal_b)
+        if not pts_a:
+            return (
+                np.zeros((0, 2), dtype=np.float64),
+                np.zeros((0, 2), dtype=np.float64),
+            )
+        return (
+            np.asarray(pts_a, dtype=np.float64),
+            np.asarray(pts_b, dtype=np.float64),
+        )
+
+    def measured_photon_energies_kev(self) -> np.ndarray:
+        """Measured energies of annihilation photons, excluding random records."""
+        values = [
+            energy
+            for energy, is_random in zip(
+                [*self.energy_a_kev, *self.energy_b_kev],
+                [*self.is_random, *self.is_random],
+                strict=True,
+            )
+            if not is_random
+        ]
+        if not values:
+            return np.zeros(0, dtype=np.float64)
+        return np.asarray(values, dtype=np.float64)
 
     def as_arrays(self) -> dict[str, np.ndarray]:
         """NumPy snapshot suitable for reconstruction pipelines."""

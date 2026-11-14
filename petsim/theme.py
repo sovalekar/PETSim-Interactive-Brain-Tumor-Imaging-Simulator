@@ -191,4 +191,42 @@ QScrollArea {{
     border: none;
     background: transparent;
 }}
+
+QTabWidget::pane {{
+    border: 1px solid {COLORS["border"]};
+    background: {COLORS["bg"]};
+}}
+
+QTabBar::tab {{
+    background: {COLORS["panel"]};
+    color: {COLORS["text_muted"]};
+    border: 1px solid {COLORS["border"]};
+    padding: 6px 14px;
+    margin-right: 2px;
+}}
+
+QTabBar::tab:selected {{
+    background: {COLORS["panel_alt"]};
+    color: {COLORS["text"]};
+}}
+
+QProgressBar {{
+    background: {COLORS["panel"]};
+    border: 1px solid {COLORS["border"]};
+    border-radius: 4px;
+    text-align: center;
+    color: {COLORS["text"]};
+    min-height: 16px;
+}}
+
+QProgressBar::chunk {{
+    background: {COLORS["accent_dim"]};
+}}
+
+QHeaderView::section {{
+    background: {COLORS["panel_alt"]};
+    color: {COLORS["text_muted"]};
+    border: 1px solid {COLORS["border"]};
+    padding: 4px;
+}}
 """

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -9,17 +12,24 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QSplitter,
     QStatusBar,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from petsim import __version__
 from petsim.acquisition_controller import AcquisitionController
+from petsim.experiment_worker import ExperimentRunner
+from petsim.analysis.pipeline import analyze_reconstruction
+from petsim.analysis_worker import AnalysisRunner
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
+from petsim.physics_comparison_worker import PhysicsComparisonRunner
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
 from petsim.reconstruction_worker import ReconstructionRunner
 from petsim.widgets.controls_panel import ControlsPanel
+from petsim.widgets.detector_physics_panel import DetectorPhysicsPanel
+from petsim.widgets.experiment_panel import ExperimentPanel
 from petsim.widgets.detector_view import DetectorView
 from petsim.widgets.reconstruction_panel import ReconstructionPanel
 
@@ -37,6 +47,10 @@ class MainWindow(QMainWindow):
 
         self.acquisition = AcquisitionController(self)
         self.recon_runner = ReconstructionRunner(self)
+        self.analysis_runner = AnalysisRunner(self)
+        self.experiment_runner = ExperimentRunner(self)
+        self.physics_runner = PhysicsComparisonRunner(self)
+        self._last_physics_draw = 0.0
 
         self._build_menu()
         self._build_body()
@@ -49,7 +63,7 @@ class MainWindow(QMainWindow):
         self.acquisition.apply_config(self.controls.acquisition_config())
         self._refresh_detector(state)
         self.statusBar().showMessage(
-            "Ready — Stage 3: acquire coincidences, then run FBP reconstruction."
+            "Ready — Stage 6: reconstruct, or open Image Quality Experiments."
         )
 
     def _build_menu(self) -> None:
@@ -94,9 +108,21 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 3)
         self.splitter.setStretchFactor(2, 3)
-        self.splitter.setSizes([300, 560, 480])
+        self.splitter.setSizes([300, 520, 520])
 
-        outer.addWidget(self.splitter, stretch=1)
+        workstation = QWidget()
+        station_layout = QVBoxLayout(workstation)
+        station_layout.setContentsMargins(0, 0, 0, 0)
+        station_layout.addWidget(self.splitter)
+
+        self.experiments = ExperimentPanel()
+        self.detector_physics = DetectorPhysicsPanel()
+        self.tabs = QTabWidget()
+        self.tabs.addTab(workstation, "Workstation")
+        self.tabs.addTab(self.detector_physics, "Detector Physics")
+        self.tabs.addTab(self.experiments, "Image Quality Experiments")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        outer.addWidget(self.tabs, stretch=1)
 
     def _build_status(self) -> None:
         status = QStatusBar()
@@ -116,9 +142,38 @@ class MainWindow(QMainWindow):
         self.acquisition.reset_done.connect(self._on_acq_reset_done)
 
         self.reconstruction.run_requested.connect(self._on_run_reconstruction)
+        self.reconstruction.compare_requested.connect(self._on_compare_algorithms)
+        self.reconstruction.cancel_requested.connect(self.recon_runner.cancel)
         self.reconstruction.clear_requested.connect(self._on_clear_reconstruction)
+        self.reconstruction.analyze_requested.connect(self._on_run_analysis)
+        self.reconstruction.count_comparison_requested.connect(
+            self._on_run_count_comparison
+        )
+
         self.recon_runner.finished.connect(self._on_recon_finished)
+        self.recon_runner.pair_finished.connect(self._on_pair_finished)
         self.recon_runner.failed.connect(self._on_recon_failed)
+        self.recon_runner.progress.connect(self._on_mlem_progress)
+
+        self.analysis_runner.analysis_finished.connect(self._on_analysis_finished)
+        self.analysis_runner.analysis_failed.connect(self._on_analysis_failed)
+        self.analysis_runner.comparison_finished.connect(self._on_comparison_finished)
+        self.analysis_runner.comparison_failed.connect(self._on_analysis_failed)
+
+        self.experiments.start_requested.connect(self._on_start_experiment)
+        self.experiments.cancel_requested.connect(self.experiment_runner.cancel)
+        self.experiments.reset_requested.connect(self.experiment_runner.invalidate_pending)
+        self.experiment_runner.progress.connect(self.experiments.show_progress)
+        self.experiment_runner.finished.connect(self._on_experiment_finished)
+        self.experiment_runner.failed.connect(self._on_experiment_failed)
+
+        self.detector_physics.config_changed.connect(self._on_detector_physics)
+        self.detector_physics.compare_requested.connect(self._on_compare_detector_configurations)
+        self.detector_physics.cancel_compare_requested.connect(self.physics_runner.cancel)
+        self.physics_runner.finished.connect(self._on_physics_comparison_finished)
+        self.physics_runner.failed.connect(self.detector_physics.show_comparison_message)
+        self.acquisition.apply_detector_physics(self.detector_physics.current_config())
+        self.experiments.set_detector_physics(self.detector_physics.current_config())
 
     def _refresh_detector(self, state: PhantomState | None = None) -> None:
         state = state or self.controls.current_state()
@@ -137,7 +192,7 @@ class MainWindow(QMainWindow):
         self._refresh_detector(state)
         tumor = "on" if state.tumor_enabled else "off"
         self.statusBar().showMessage(
-            f"Phantom updated (acquisition + reconstruction cleared) · "
+            f"Phantom updated (acquisition + reconstruction + analysis cleared) · "
             f"brain r={state.brain_radius:.2f} · tumor {tumor}"
         )
 
@@ -147,13 +202,81 @@ class MainWindow(QMainWindow):
     def _on_acq_config(self, config: AcquisitionConfig) -> None:
         self.acquisition.apply_config(config)
 
+    def _physics_tab_visible(self) -> bool:
+        return self.tabs.currentWidget() is self.detector_physics
+
+    def _push_physics_stats(self, stats: AcquisitionStats, *, force: bool = False) -> None:
+        """Redraw energy and class plots only while that tab is open.
+
+        A full histogram on every acquisition tick stalls the workstation.
+        Labels still update every tick. Opening the tab refreshes the figures.
+        """
+        visible = self._physics_tab_visible()
+        now = time.monotonic()
+        redraw = force or (
+            visible and (stats.finished or now - self._last_physics_draw >= 0.2)
+        )
+        energies = None
+        if redraw:
+            self._last_physics_draw = now
+            energies = self.acquisition.measured_photon_energies_kev()
+        self.detector_physics.update_stats(stats, energies, redraw_plots=redraw)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._physics_tab_visible():
+            self._push_physics_stats(self.acquisition.stats, force=True)
+
+    def _on_detector_physics(self, config) -> None:
+        self.acquisition.apply_detector_physics(config)
+        self.experiments.set_detector_physics(config)
+        if self.acquisition.stats.total_events > 0:
+            self.statusBar().showMessage(
+                "Detector settings apply to the next acquisition. "
+                "Events already stored are unchanged."
+            )
+
     def _on_start(self) -> None:
-        # New acquisition invalidates any previous reconstruction.
+        # New acquisition invalidates any previous reconstruction / analysis.
+        self.recon_runner.invalidate_pending()
+        self.physics_runner.invalidate_pending()
         self.reconstruction.invalidate("New acquisition started.")
+        self.detector_physics.clear_visuals()
         self.acquisition.apply_config(self.controls.acquisition_config())
         self.acquisition.start()
         self.controls.set_acquisition_controls_enabled(False)
         self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
+
+    def _on_compare_detector_configurations(self) -> None:
+        ideal_a, ideal_b = self.acquisition.ideal_coincidence_endpoints()
+        degraded_a, degraded_b = self.acquisition.coincidence_endpoints()
+        if ideal_a.shape[0] == 0 and degraded_a.shape[0] == 0:
+            self.detector_physics.show_comparison_message(
+                "Acquire coincidences before comparing ideal and degraded reconstructions."
+            )
+            return
+        config = ReconstructionConfig(
+            method=self.detector_physics.comparison_method(),
+            n_iterations=self.detector_physics.comparison_iterations(),
+            image_size=96,
+            n_theta=64,
+            n_s=96,
+            filter_name="hann",
+        ).clamp()
+        started = self.physics_runner.start(ideal_a, ideal_b, degraded_a, degraded_b, config)
+        if not started:
+            self.detector_physics.show_comparison_message("A comparison is already running.")
+            return
+        self.detector_physics.show_comparison_busy(
+            f"Reconstructing ideal and degraded data with {config.method.upper()}…"
+        )
+
+    def _on_physics_comparison_finished(self, result) -> None:
+        try:
+            self.detector_physics.show_comparison(result.ideal, result.degraded)
+        except Exception as exc:  # noqa: BLE001 — a display error must not leave the buttons stuck
+            self.detector_physics.show_comparison_message(
+                f"Could not display the reconstruction: {exc}"
+            )
 
     def _on_reset_acq(self) -> None:
         self.acquisition.reset()
@@ -161,12 +284,17 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Acquisition reset.")
 
     def _on_acq_reset_done(self) -> None:
+        self.recon_runner.invalidate_pending()
+        self.physics_runner.invalidate_pending()
         self.detector_view.clear_events()
         self.reconstruction.set_acquired_phantom(None)
         self.reconstruction.invalidate("Acquisition data cleared.")
+        self.detector_physics.clear_visuals()
+        self.detector_physics.update_stats(self.acquisition.stats, np.zeros(0))
 
     def _on_stats(self, stats: AcquisitionStats) -> None:
         self.controls.update_stats(stats)
+        self._push_physics_stats(stats)
         self.reconstruction.update_coincidence_count(stats.coincidences)
         # If acquisition keeps growing after a mid-run recon, mark output stale.
         prior = self.reconstruction._result
@@ -206,30 +334,165 @@ class MainWindow(QMainWindow):
         if not ok:
             self.reconstruction.show_error("Reconstruction already in progress.")
             return
+        if config.method == "mlem":
+            label = f"MLEM ({config.n_iterations} iterations)"
+        else:
+            label = f"FBP ({config.filter_name})"
         self.statusBar().showMessage(
-            f"Reconstructing {hits_a.shape[0]:,} coincidences with FBP "
-            f"({config.filter_name})…"
+            f"Reconstructing {hits_a.shape[0]:,} coincidences with {label}…"
+        )
+
+    def _on_mlem_progress(
+        self, job_id: int, iteration: int, total: int, loglik: float, rel: float
+    ) -> None:
+        if not self.recon_runner.accepts(job_id):
+            return
+        self.reconstruction.show_mlem_progress(iteration, total, loglik, rel)
+
+    def _on_compare_algorithms(self, fbp_config: ReconstructionConfig, mlem_config: ReconstructionConfig) -> None:
+        hits_a, hits_b = self.acquisition.coincidence_endpoints()
+        if hits_a.shape[0] == 0:
+            self.reconstruction.show_error("No coincidence endpoints available.")
+            return
+        self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
+        ok = self.recon_runner.start(
+            hits_a,
+            hits_b,
+            fbp_config,
+            pair=True,
+            mlem_config=mlem_config,
+        )
+        if not ok:
+            self.reconstruction.show_error("Reconstruction already in progress.")
+            return
+        self.statusBar().showMessage(
+            f"Comparing FBP and MLEM on {hits_a.shape[0]:,} coincidences "
+            f"({mlem_config.n_iterations} MLEM iterations)…"
         )
 
     def _on_recon_finished(self, result: ReconstructionResult) -> None:
+        if not self.recon_runner.accepts(result.job_id):
+            return
         self.reconstruction.show_result(result)
+        self._refresh_algorithm_metrics()
         self.statusBar().showMessage(result.message)
+
+    def _on_pair_finished(self, fbp: ReconstructionResult, mlem: ReconstructionResult) -> None:
+        if not self.recon_runner.accepts(fbp.job_id):
+            return
+        self.reconstruction.show_algorithm_pair(fbp, mlem)
+        self._refresh_algorithm_metrics()
+        self.statusBar().showMessage(f"{fbp.message} | {mlem.message}")
+
+    def _refresh_algorithm_metrics(self) -> None:
+        fbp = self.reconstruction._fbp_result
+        mlem = self.reconstruction._mlem_result
+        state = self.acquisition.acquired_phantom_state
+        if (
+            fbp is None
+            or mlem is None
+            or not fbp.has_data
+            or not mlem.has_data
+            or state is None
+        ):
+            return
+        self.reconstruction.show_algorithm_metrics(
+            analyze_reconstruction(fbp, state),
+            analyze_reconstruction(mlem, state),
+        )
 
     def _on_recon_failed(self, message: str) -> None:
         self.reconstruction.show_error(message)
         self.statusBar().showMessage(f"Reconstruction failed: {message}")
 
+    def _on_run_analysis(self) -> None:
+        result = self.reconstruction._result
+        if result is None or not result.has_data:
+            self.reconstruction.show_analysis_error(
+                "No reconstruction available for analysis."
+            )
+            return
+        phantom_state = self.acquisition.acquired_phantom_state
+        ok = self.analysis_runner.start_analysis(result, phantom_state)
+        if not ok:
+            self.reconstruction.show_analysis_error("Analysis already in progress.")
+            return
+        self.statusBar().showMessage("Running quantitative analysis…")
+
+    def _on_run_count_comparison(self) -> None:
+        hits_a, hits_b = self.acquisition.coincidence_endpoints()
+        if hits_a.shape[0] == 0:
+            self.reconstruction.show_analysis_error(
+                "No coincidence endpoints available for count comparison."
+            )
+            return
+        config = self.reconstruction.current_config().as_method("fbp")
+        phantom_state = self.acquisition.acquired_phantom_state
+        ok = self.analysis_runner.start_count_comparison(
+            hits_a, hits_b, config, phantom_state
+        )
+        if not ok:
+            self.reconstruction.show_analysis_error(
+                "Analysis already in progress."
+            )
+            return
+        self.statusBar().showMessage(
+            f"Comparing reconstruction quality across coincidence-count levels "
+            f"({hits_a.shape[0]:,} available)…"
+        )
+
+    def _on_analysis_finished(self, analysis) -> None:
+        self.reconstruction.show_analysis(analysis)
+        self.statusBar().showMessage(analysis.message)
+
+    def _on_comparison_finished(self, comparison) -> None:
+        self.reconstruction.show_count_comparison(comparison)
+        self.statusBar().showMessage(comparison.message)
+
+    def _on_analysis_failed(self, message: str) -> None:
+        self.reconstruction.show_analysis_error(message)
+        self.statusBar().showMessage(f"Analysis failed: {message}")
+
+    def _on_start_experiment(self) -> None:
+        config = self.experiments.build_config(self.controls.current_state())
+        if config is None:
+            self.experiments.show_error("Select at least one method and one coincidence target.")
+            return
+        self.experiments.set_busy(True)
+        self.experiments.show_progress(0, 1, "Starting experiment…")
+        ok = self.experiment_runner.start(config)
+        if not ok:
+            self.experiments.show_error("An experiment is already running.")
+            return
+        self.statusBar().showMessage(
+            "Image-quality experiment running "
+            f"({', '.join(m.upper() for m in config.methods)}, "
+            f"{config.n_trials} trial(s))."
+        )
+
+    def _on_experiment_finished(self, result) -> None:
+        self.experiments.show_result(result)
+        self.statusBar().showMessage(result.message)
+
+    def _on_experiment_failed(self, message: str) -> None:
+        self.experiments.show_error(message)
+        self.statusBar().showMessage(f"Experiment failed: {message}")
+
     def _on_clear_reconstruction(self) -> None:
+        self.recon_runner.invalidate_pending()
         self.statusBar().showMessage("Reconstruction output cleared.")
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt naming
         """Stop timers/threads before the window is destroyed (macOS-safe)."""
         self.acquisition.reset()
         self.recon_runner.shutdown(timeout_ms=10_000)
+        self.analysis_runner.shutdown(timeout_ms=10_000)
+        self.experiment_runner.shutdown(timeout_ms=10_000)
+        self.physics_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
     def _reset_splitter(self) -> None:
-        self.splitter.setSizes([300, 560, 480])
+        self.splitter.setSizes([300, 520, 520])
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
@@ -242,8 +505,12 @@ class MainWindow(QMainWindow):
                 "Educational PET brain-tumor imaging simulator.<br>"
                 "Built with PySide6, NumPy, and Matplotlib.<br><br>"
                 "<b>Stage 2:</b> annihilation, 511&nbsp;keV photons, coincidences.<br>"
-                "<b>Stage 3:</b> measured sinogram + filtered backprojection (FBP).<br><br>"
-                "Idealized model: no attenuation, scatter, or positron range.<br>"
+                "<b>Stage 3:</b> measured sinogram + filtered backprojection (FBP).<br>"
+                "<b>Stage 4:</b> localization, contrast / TBR, count comparison.<br>"
+                "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br>"
+                "<b>Stage 6:</b> repeated image-quality experiments.<br>"
+                "<b>Stage 7:</b> optional energy, timing, randoms, and simplified scatter.<br><br>"
+                "Detector effects are off unless you enable them.<br>"
                 "Not a clinical diagnostic tool."
             ),
         )
