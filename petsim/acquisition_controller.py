@@ -17,6 +17,7 @@ from petsim.physics.acquisition import (
     AcquisitionConfig,
     AcquisitionStats,
 )
+from petsim.physics.detector_effects import DetectorPhysicsConfig, account_events
 from petsim.physics.pet_engine import AnnihilationEvent, PETEngine
 
 
@@ -36,6 +37,7 @@ class AcquisitionController(QObject):
         self.engine = PETEngine(self.phantom, self.ring)
         self.buffer = AcquisitionBuffer()
         self.config = AcquisitionConfig().clamp()
+        self.physics = DetectorPhysicsConfig()
         # Snapshot of the uptake map used for the current acquisition (Stage 3
         # comparison). Cleared on reset; never used as a reconstruction input.
         self.acquired_activity: np.ndarray | None = None
@@ -66,6 +68,13 @@ class AcquisitionController(QObject):
         if self._stats.total_events >= self.config.n_events and self._stats.running:
             self._complete()
         else:
+            self._emit_stats()
+
+    def apply_detector_physics(self, config: DetectorPhysicsConfig) -> None:
+        """Store Stage 7 settings for later annihilation batches."""
+        self.physics = config.clamp()
+        self._stats.effects_enabled = self.physics.enabled
+        if not self._stats.running:
             self._emit_stats()
 
     def start(self) -> None:
@@ -121,11 +130,19 @@ class AcquisitionController(QObject):
             running=False,
             paused=False,
             finished=False,
+            effects_enabled=self.physics.enabled,
         )
 
     def coincidence_endpoints(self) -> tuple[np.ndarray, np.ndarray]:
-        """Measured LOR endpoints for Stage 3 (no annihilation truth)."""
+        """Accepted measured endpoints. Annihilation coordinates are omitted."""
         return self.buffer.coincidence_endpoints()
+
+    def ideal_coincidence_endpoints(self) -> tuple[np.ndarray, np.ndarray]:
+        """Ideal-detector endpoints for the same annihilations."""
+        return self.buffer.ideal_coincidence_endpoints()
+
+    def measured_photon_energies_kev(self) -> np.ndarray:
+        return self.buffer.measured_photon_energies_kev()
 
     def _on_tick(self) -> None:
         if self._stats.paused or not self._stats.running:
@@ -140,10 +157,20 @@ class AcquisitionController(QObject):
         events: list[AnnihilationEvent] = self.engine.simulate_batch(
             batch_n,
             detector_efficiency=self.config.detector_efficiency,
+            physics=self.physics,
         )
         n_coin = self.buffer.extend(events)
-        self._stats.total_events += len(events)
+        accounted = account_events(events)
+        self._stats.total_events += accounted.annihilations
         self._stats.coincidences += n_coin
+        self._stats.detected_singles += accounted.detected_singles
+        self._stats.undetected += accounted.undetected
+        self._stats.accepted_unscattered += accounted.accepted_unscattered
+        self._stats.scattered_coincidences += accounted.accepted_scattered
+        self._stats.random_coincidences += accounted.accepted_random
+        self._stats.energy_rejected += accounted.energy_rejected
+        self._stats.timing_rejected += accounted.timing_rejected
+        self._stats.effects_enabled = self.physics.enabled
         self._stats.detector_efficiency = self.config.detector_efficiency
         self._stats.target_events = self.config.n_events
 

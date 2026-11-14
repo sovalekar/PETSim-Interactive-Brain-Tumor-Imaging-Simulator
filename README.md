@@ -16,7 +16,102 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **3** | Done | Measured sinogram from coincidences + filtered backprojection (FBP) |
 | **4** | Done | Tumor localization, TBR / contrast / background CV, coincidence-count comparison |
 | **5** | Done | MLEM iterative reconstruction, convergence, and FBP comparison |
-| **6** | **This release (v0.6.0)** | Repeated image-quality experiments versus coincidence count |
+| **6** | Done | Repeated image-quality experiments versus coincidence count |
+| **7** | **This release (v0.7.0)** | Energy resolution, timing window, randoms, and simplified Compton scatter |
+
+---
+
+## Stage 7 overview
+
+The **Detector Physics** tab adds optional detector degradation. **Enable detector effects** is off by default, so Stages 1–6 keep the ideal coincidence model (`P(coincidence) = ε²`).
+
+The tab has its own energy histogram, accepted-class bar chart, and ideal-versus-degraded image pair. Those figures are not the workstation reconstruction canvas, the MLEM convergence graph, the Stage 4 count-comparison graph, or the Stage 6 experiment plots.
+
+### Units and scale
+
+| Quantity | Unit | Definition |
+| --- | --- | --- |
+| Photon energy | keV | 511 keV before detector blur or Compton loss |
+| Energy resolution | percent | FWHM at 511 keV |
+| Time | ps | picoseconds |
+| Ring scale | cm | normalized radius 0.92 represents 15 cm |
+| Speed of light | cm/ps | 0.0299792458 |
+
+### Energy
+
+\[
+\mathrm{FWHM}_E = 511\,\mathrm{keV}\times\frac{\mathrm{percent}}{100},
+\quad
+\sigma_E = \frac{\mathrm{FWHM}_E}{2\sqrt{2\ln 2}}
+\]
+
+Measured energy is Gaussian about the true photon energy and clipped at 0 keV. Both photons must lie in \([E_\mathrm{low}, E_\mathrm{high}]\). The histogram draws those two bounds.
+
+### Timing
+
+Path length is converted from FOV units to centimetres with the 15 cm ring scale, then divided by \(c\).
+
+\[
+\Delta t_\mathrm{flight} = t_A - t_B
+\]
+
+\[
+\Delta t_\mathrm{residual} \sim \mathcal{N}(0, \sigma_\mathrm{CTR}^2),
+\quad
+\sigma_\mathrm{CTR} = \frac{\mathrm{FWHM}_\mathrm{CTR}}{2\sqrt{2\ln 2}}
+\]
+
+\[
+\Delta t_\mathrm{measured} = \Delta t_\mathrm{flight} + \Delta t_\mathrm{residual}
+\]
+
+\(\mathrm{FWHM}_\mathrm{CTR}\) is the full width of the detector contribution to the **time difference**, not the width of one crystal. Geometric correction means subtracting the true flight time:
+
+\[
+\Delta t_\mathrm{residual} = \Delta t_\mathrm{measured} - \Delta t_\mathrm{flight}
+\]
+
+That subtraction uses the simulated path lengths. A coincidence processor does not know the annihilation point, so it cannot do it. **The acceptance window is applied to \(|\Delta t_\mathrm{measured}|\)**, not to the flight time and not to the residual. Timing is an accept/reject cut only. There is no time-of-flight reconstruction.
+
+### Random coincidences
+
+`random fraction` is the probability that one annihilation also adds one accepted coincidence between two distinct, uniformly chosen crystals. The endpoints are crystal centers. They are not a back-to-back line from the tumor or from that annihilation.
+
+### Compton scatter
+
+Each photon scatters at most once, with the chosen probability. The site is 20–80% of the way along the original chord. The in-plane deflection \(\phi\) is Gaussian (default standard deviation 0.6 rad). Energy follows
+
+\[
+E' = \frac{E}{1 + (E/511\,\mathrm{keV})(1-\cos\phi)}
+\]
+
+and then the energy resolution and energy window. This is not Klein–Nishina sampling, not attenuation, and not a validated patient-scatter simulation.
+
+### Event accounting
+
+These bins do not overlap:
+
+* generated annihilations
+* detected singles (exactly one photon passed the efficiency draw)
+* undetected (neither photon passed efficiency)
+* accepted unscattered coincidences
+* accepted scattered coincidences
+* energy-window rejections
+* timing-window rejections
+
+Every annihilation is in exactly one of those bins. A pair that fails the energy window is an energy rejection even if its measured time difference is also outside the timing window. Random coincidences are extra accepted events, not annihilations.
+
+\[
+N_\mathrm{accepted} = N_\mathrm{true} + N_\mathrm{scattered} + N_\mathrm{random}
+\]
+
+Workstation **Reconstruct** and both FBP and MLEM receive only accepted ring hits: true, scattered, and random. They do not receive tumor coordinates. The ideal-versus-degraded view reconstructs efficiency-detected pre-scatter hits beside those accepted hits, with the same algorithm.
+
+### Experiments
+
+On **Image Quality Experiments**, **Apply Detector Physics tab settings** is unchecked by default. The experiment then ignores the physics tab and keeps the ideal model.
+
+If you check it, the tab’s settings are copied at start and written into the CSV metadata (`detector_effects_applied` and each parameter). The coincidence target then counts accepted events, including scatter and randoms. FBP and MLEM in one trial still share that list.
 
 ---
 

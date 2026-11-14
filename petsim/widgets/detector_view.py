@@ -250,37 +250,72 @@ class DetectorCanvas(FigureCanvasQTAgg):
             xa, ya = ev.hit_a_xy
             xb, yb = ev.hit_b_xy
 
-            (line_a,) = ax.plot(
-                [x0, xa],
-                [y0, ya],
-                color=color,
-                linewidth=lw,
-                alpha=alpha,
-                solid_capstyle="round",
-                zorder=20,
-            )
-            (line_b,) = ax.plot(
-                [x0, xb],
-                [y0, yb],
-                color=color,
-                linewidth=lw,
-                alpha=alpha,
-                solid_capstyle="round",
-                zorder=20,
-            )
-            self._overlay_artists.extend([line_a, line_b])
-
-            # Annihilation marker
-            (ann,) = ax.plot(
-                [x0],
-                [y0],
-                marker="o",
-                markersize=4 if is_newest else 2.5,
-                color=COLORS["text"],
-                alpha=alpha,
-                zorder=21,
-            )
-            self._overlay_artists.append(ann)
+            if ev.is_random:
+                # Unrelated crystals: draw the measured chord, not a fake origin.
+                color = COLORS["detector"]
+                (chord,) = ax.plot(
+                    [xa, xb],
+                    [ya, yb],
+                    color=color,
+                    linewidth=lw,
+                    alpha=alpha,
+                    solid_capstyle="round",
+                    zorder=20,
+                )
+                self._overlay_artists.append(chord)
+            elif ev.is_scattered:
+                # The measured line of response is the chord. The annihilation
+                # marker stays, but the straight rays would hide the deflection.
+                (chord,) = ax.plot(
+                    [xa, xb],
+                    [ya, yb],
+                    color=COLORS["warn"],
+                    linewidth=lw,
+                    alpha=alpha,
+                    solid_capstyle="round",
+                    zorder=20,
+                )
+                self._overlay_artists.append(chord)
+                (ann,) = ax.plot(
+                    [x0],
+                    [y0],
+                    marker="o",
+                    markersize=4 if is_newest else 2.5,
+                    color=COLORS["text"],
+                    alpha=alpha,
+                    zorder=21,
+                )
+                self._overlay_artists.append(ann)
+            else:
+                (line_a,) = ax.plot(
+                    [x0, xa],
+                    [y0, ya],
+                    color=color,
+                    linewidth=lw,
+                    alpha=alpha,
+                    solid_capstyle="round",
+                    zorder=20,
+                )
+                (line_b,) = ax.plot(
+                    [x0, xb],
+                    [y0, yb],
+                    color=color,
+                    linewidth=lw,
+                    alpha=alpha,
+                    solid_capstyle="round",
+                    zorder=20,
+                )
+                self._overlay_artists.extend([line_a, line_b])
+                (ann,) = ax.plot(
+                    [x0],
+                    [y0],
+                    marker="o",
+                    markersize=4 if is_newest else 2.5,
+                    color=COLORS["text"],
+                    alpha=alpha,
+                    zorder=21,
+                )
+                self._overlay_artists.append(ann)
 
             # Hit markers only when that photon was detected
             if ev.detected_a:
@@ -325,8 +360,8 @@ class DetectorView(QFrame):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "48-element circular detector ring. Green LORs = coincidences; "
-            "red = failed single-photon detection. Paths follow simulated annihilations."
+            "48-element circular detector ring. Green rays = unscattered coincidences; "
+            "amber chords = scatter; blue chords = random pairs; red = missed photons."
         )
         subtitle.setObjectName("HintLabel")
         subtitle.setWordWrap(True)

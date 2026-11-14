@@ -44,6 +44,7 @@ def collect_coincidences(
     detector_efficiency: float,
     cancel: CancelCallback | None = None,
     batch_size: int = 800,
+    physics: object | None = None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Simulate until ``n_target`` coincidences exist and return that prefix.
 
@@ -64,10 +65,16 @@ def collect_coincidences(
     while int(np.count_nonzero(buf.coincidence_flags)) < target:
         if cancel is not None and cancel():
             return None
-        if len(buf) >= max_annihilations:
+        if buf.n_annihilations() >= max_annihilations:
             break
-        n = min(batch, max_annihilations - len(buf))
-        buf.extend(engine.simulate_batch(n, detector_efficiency=efficiency))
+        n = min(batch, max_annihilations - buf.n_annihilations())
+        buf.extend(
+            engine.simulate_batch(
+                n,
+                detector_efficiency=efficiency,
+                physics=physics,
+            )
+        )
     hits_a, hits_b = buf.coincidence_endpoints()
     return hits_a[:target], hits_b[:target]
 
@@ -175,6 +182,7 @@ def run_experiment(
                 count,
                 detector_efficiency=cfg.detector_efficiency,
                 cancel=cancel,
+                physics=cfg.detector_physics,
             )
             if acquired is None:
                 cancelled = True

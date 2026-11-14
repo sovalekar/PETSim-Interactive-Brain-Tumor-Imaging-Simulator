@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from petsim.experiments.config import DEFAULT_COUNT_TARGETS, ExperimentConfig
+from petsim.physics.detector_effects import DetectorPhysicsConfig
 from petsim.experiments.export import export_experiment
 from petsim.experiments.runner import ExperimentResult
 from petsim.models.phantom import PhantomState
@@ -146,6 +147,7 @@ class ExperimentPanel(QWidget):
         super().__init__(parent)
         self._result: ExperimentResult | None = None
         self._busy = False
+        self._detector_physics = DetectorPhysicsConfig()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -224,6 +226,20 @@ class ExperimentPanel(QWidget):
         self._efficiency.setValue(0.80)
         form.addWidget(QLabel("Detector efficiency"), 6, 0)
         form.addWidget(self._efficiency, 6, 1)
+        self._use_physics = QCheckBox("Apply Detector Physics tab settings")
+        self._use_physics.setChecked(False)
+        form.addWidget(self._use_physics, 7, 0, 1, 2)
+        physics_note = QLabel(
+            "Unchecked: every trial uses the ideal coincidence model, even if "
+            "the Detector Physics tab is enabled. Checked: the settings on that "
+            "tab, including whether effects are enabled, are copied when the "
+            "experiment starts and written into the CSV metadata. FBP and MLEM "
+            "in one trial still share that coincidence list. The count target "
+            "then means accepted coincidences (true, scattered, and random)."
+        )
+        physics_note.setWordWrap(True)
+        physics_note.setObjectName("HintLabel")
+        form.addWidget(physics_note, 8, 0, 1, 2)
         layout.addWidget(setup)
 
         buttons = QHBoxLayout()
@@ -304,6 +320,7 @@ class ExperimentPanel(QWidget):
         if not methods or not counts:
             return None
         filt = "hann" if self._filter.currentText().lower().startswith("hann") else "ramp"
+        physics = self._detector_physics if self._use_physics.isChecked() else None
         return ExperimentConfig(
             phantom=phantom,
             methods=tuple(methods),
@@ -313,7 +330,12 @@ class ExperimentPanel(QWidget):
             n_iterations=int(self._iterations.currentText()),
             filter_name=filt,
             detector_efficiency=float(self._efficiency.value()),
+            detector_physics=physics,
         ).clamp()
+
+    def set_detector_physics(self, config: DetectorPhysicsConfig) -> None:
+        """Remember the latest Detector Physics tab settings for an opted-in run."""
+        self._detector_physics = config.clamp()
 
     def set_busy(self, busy: bool) -> None:
         self._busy = busy

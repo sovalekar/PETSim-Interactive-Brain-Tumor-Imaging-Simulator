@@ -42,6 +42,32 @@ AGGREGATE_COLUMNS = (
 )
 
 
+def _physics_metadata(cfg) -> list[str]:
+    """Record whether Stage 7 settings were applied to every trial."""
+    physics = cfg.detector_physics
+    if physics is None or not physics.enabled:
+        return [
+            "# detector_effects_applied=false",
+            "# detector_effects_note=ideal_stage2_coincidence_model",
+        ]
+    return [
+        "# detector_effects_applied=true",
+        f"# energy_fwhm_percent_at_511keV={physics.energy_fwhm_percent}",
+        f"# energy_window_low_kev={physics.energy_window_low_kev}",
+        f"# energy_window_high_kev={physics.energy_window_high_kev}",
+        f"# timing_fwhm_ps={physics.timing_fwhm_ps}",
+        f"# timing_window_ps={physics.timing_window_ps}",
+        "# timing_window_quantity=abs_measured_delta_t_ps",
+        "# timing_window_not_applied_to=flight_time_difference_or_geometric_residual",
+        f"# random_fraction={physics.random_fraction}",
+        "# random_fraction_semantics=probability_of_one_extra_unrelated_crystal_pair_per_annihilation",
+        f"# scatter_probability_per_photon={physics.scatter_probability}",
+        f"# scatter_angle_sigma_rad={physics.scatter_angle_sigma_rad}",
+        "# scatter_model=single_scatter_2d_compton_cartoon_not_patient_monte_carlo",
+        "# coincidence_target_includes_accepted_true_scatter_and_random=true",
+    ]
+
+
 def _fmt(value: float | int | None) -> str:
     if value is None:
         return ""
@@ -66,6 +92,7 @@ def metadata_lines(result: ExperimentResult) -> list[str]:
         f"# methods={','.join(cfg.methods)}",
         f"# count_targets={','.join(str(c) for c in cfg.count_targets)}",
         f"# detector_efficiency={cfg.detector_efficiency}",
+        *_physics_metadata(cfg),
         f"# n_detectors={cfg.n_detectors}",
         f"# filter_name={cfg.filter_name}",
         f"# mlem_iterations={cfg.n_iterations}",

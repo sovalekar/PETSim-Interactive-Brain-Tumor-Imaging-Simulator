@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from petsim.models.phantom import PhantomState
+from petsim.physics.detector_effects import DetectorPhysicsConfig
 
 DEFAULT_COUNT_TARGETS: tuple[int, ...] = (1000, 3000, 5000, 10000, 20000)
 
@@ -47,6 +48,7 @@ class ExperimentConfig:
     smooth_sigma_s: float = 1.5
     smooth_sigma_theta: float = 0.75
     n_detectors: int = 48
+    detector_physics: DetectorPhysicsConfig | None = None
 
     def clamp(self) -> ExperimentConfig:
         methods = tuple(
@@ -64,6 +66,7 @@ class ExperimentConfig:
         )
         filt = self.filter_name.lower().strip()
         filt = "hann" if filt in {"hann", "hanning"} else "ramp"
+        physics = None if self.detector_physics is None else self.detector_physics.clamp()
         return ExperimentConfig(
             phantom=self.phantom.clamp(),
             methods=tuple(seen),
@@ -81,4 +84,5 @@ class ExperimentConfig:
             smooth_sigma_s=float(max(self.smooth_sigma_s, 0.0)),
             smooth_sigma_theta=float(max(self.smooth_sigma_theta, 0.0)),
             n_detectors=int(np.clip(self.n_detectors, 8, 256)),
+            detector_physics=physics,
         )

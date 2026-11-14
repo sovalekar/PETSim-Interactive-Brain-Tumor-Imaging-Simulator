@@ -10,10 +10,12 @@ Simplifications for this stage (documented for learners):
 
 * Ideal back-to-back emission (exactly opposite directions).
 * No tissue attenuation (both photons always reach the ring geometrically).
-* No Compton scattering / randoms / pile-up.
 * No positron range (annihilation location = emission location).
 * Independent Bernoulli detection with efficiency ε per photon.
-  Coincidence probability is therefore ``P(coincidence) = ε²``.
+  With detector effects off, ``P(coincidence) = ε²``.
+* Optional Stage 7 energy, timing, random, and scatter effects are applied
+  only when an enabled ``DetectorPhysicsConfig`` is passed. They are an
+  educational detector model, not a clinical scanner simulation.
 
 These coincidences are stored for a future reconstruction stage. This module
 does **not** form sinograms or reconstruct images.
@@ -51,11 +53,38 @@ class AnnihilationEvent:
     detected_a: bool
     detected_b: bool
     energy_kev: float = PHOTON_ENERGY_KEV
+    energy_a_kev: float = PHOTON_ENERGY_KEV
+    energy_b_kev: float = PHOTON_ENERGY_KEV
+    ideal_hit_a_xy: tuple[float, float] | None = None
+    ideal_hit_b_xy: tuple[float, float] | None = None
+    flight_time_difference_ps: float = 0.0
+    timing_residual_ps: float = 0.0
+    measured_delta_t_ps: float = 0.0
+    passed_energy: bool = True
+    passed_timing: bool = True
+    is_scattered: bool = False
+    is_random: bool = False
 
     @property
     def is_coincidence(self) -> bool:
-        """True only when *both* photons are detected (valid LOR)."""
-        return self.detected_a and self.detected_b
+        """Accepted coincidence: both photons detected and inside both windows.
+
+        Defaults keep the Stage 2 rule (both photons detected). Random
+        coincidences are accepted pairs that did not come from one annihilation.
+        """
+        return (
+            self.detected_a
+            and self.detected_b
+            and self.passed_energy
+            and self.passed_timing
+        )
+
+    @property
+    def ideal_endpoints(self) -> tuple[tuple[float, float], tuple[float, float]]:
+        """Pre-degradation ring hits. Random records have no ideal line."""
+        hit_a = self.ideal_hit_a_xy if self.ideal_hit_a_xy is not None else self.hit_a_xy
+        hit_b = self.ideal_hit_b_xy if self.ideal_hit_b_xy is not None else self.hit_b_xy
+        return hit_a, hit_b
 
     @property
     def detector_pair(self) -> tuple[int, int]:
@@ -151,6 +180,7 @@ class PETEngine:
         n_events: int,
         *,
         detector_efficiency: float = 0.8,
+        physics: object | None = None,
     ) -> list[AnnihilationEvent]:
         """Simulate ``n_events`` annihilations and return per-event records.
 
@@ -160,7 +190,11 @@ class PETEngine:
             Number of positron annihilations to generate.
         detector_efficiency :
             Independent single-photon detection probability ε in ``[0, 1]``.
-            Expected coincidence fraction ≈ ε².
+            Expected coincidence fraction ≈ ε² when detector effects are off.
+        physics :
+            Optional ``DetectorPhysicsConfig``. A missing or disabled config
+            does not draw extra random numbers. An enabled config may append
+            random-coincidence records after the annihilations.
         """
         eps = float(np.clip(detector_efficiency, 0.0, 1.0))
         if n_events <= 0:
@@ -199,6 +233,16 @@ class PETEngine:
                     detected_b=bool(detected_b[i]),
                     energy_kev=PHOTON_ENERGY_KEV,
                 )
+            )
+        if physics is not None and getattr(physics, "enabled", False):
+            from petsim.physics.detector_effects import apply_detector_physics
+
+            return apply_detector_physics(
+                events,
+                physics,  # type: ignore[arg-type]
+                self.rng,
+                ring_radius=self.ring.radius,
+                n_detectors=self.ring.n_detectors,
             )
         return events
 

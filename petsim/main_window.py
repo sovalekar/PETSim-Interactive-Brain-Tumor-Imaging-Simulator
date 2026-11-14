@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -21,9 +24,11 @@ from petsim.analysis.pipeline import analyze_reconstruction
 from petsim.analysis_worker import AnalysisRunner
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
+from petsim.physics_comparison_worker import PhysicsComparisonRunner
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
 from petsim.reconstruction_worker import ReconstructionRunner
 from petsim.widgets.controls_panel import ControlsPanel
+from petsim.widgets.detector_physics_panel import DetectorPhysicsPanel
 from petsim.widgets.experiment_panel import ExperimentPanel
 from petsim.widgets.detector_view import DetectorView
 from petsim.widgets.reconstruction_panel import ReconstructionPanel
@@ -44,6 +49,8 @@ class MainWindow(QMainWindow):
         self.recon_runner = ReconstructionRunner(self)
         self.analysis_runner = AnalysisRunner(self)
         self.experiment_runner = ExperimentRunner(self)
+        self.physics_runner = PhysicsComparisonRunner(self)
+        self._last_physics_draw = 0.0
 
         self._build_menu()
         self._build_body()
@@ -109,9 +116,12 @@ class MainWindow(QMainWindow):
         station_layout.addWidget(self.splitter)
 
         self.experiments = ExperimentPanel()
+        self.detector_physics = DetectorPhysicsPanel()
         self.tabs = QTabWidget()
         self.tabs.addTab(workstation, "Workstation")
+        self.tabs.addTab(self.detector_physics, "Detector Physics")
         self.tabs.addTab(self.experiments, "Image Quality Experiments")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         outer.addWidget(self.tabs, stretch=1)
 
     def _build_status(self) -> None:
@@ -157,6 +167,14 @@ class MainWindow(QMainWindow):
         self.experiment_runner.finished.connect(self._on_experiment_finished)
         self.experiment_runner.failed.connect(self._on_experiment_failed)
 
+        self.detector_physics.config_changed.connect(self._on_detector_physics)
+        self.detector_physics.compare_requested.connect(self._on_compare_detector_configurations)
+        self.detector_physics.cancel_compare_requested.connect(self.physics_runner.cancel)
+        self.physics_runner.finished.connect(self._on_physics_comparison_finished)
+        self.physics_runner.failed.connect(self.detector_physics.show_comparison_message)
+        self.acquisition.apply_detector_physics(self.detector_physics.current_config())
+        self.experiments.set_detector_physics(self.detector_physics.current_config())
+
     def _refresh_detector(self, state: PhantomState | None = None) -> None:
         state = state or self.controls.current_state()
         opts = self.controls.display_options()
@@ -184,14 +202,71 @@ class MainWindow(QMainWindow):
     def _on_acq_config(self, config: AcquisitionConfig) -> None:
         self.acquisition.apply_config(config)
 
+    def _physics_tab_visible(self) -> bool:
+        return self.tabs.currentWidget() is self.detector_physics
+
+    def _push_physics_stats(self, stats: AcquisitionStats, *, force: bool = False) -> None:
+        """Redraw energy and class plots only while that tab is open.
+
+        A full histogram on every acquisition tick stalls the workstation.
+        Labels still update every tick. Opening the tab refreshes the figures.
+        """
+        visible = self._physics_tab_visible()
+        now = time.monotonic()
+        redraw = force or (
+            visible and (stats.finished or now - self._last_physics_draw >= 0.2)
+        )
+        energies = None
+        if redraw:
+            self._last_physics_draw = now
+            energies = self.acquisition.measured_photon_energies_kev()
+        self.detector_physics.update_stats(stats, energies, redraw_plots=redraw)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        if self._physics_tab_visible():
+            self._push_physics_stats(self.acquisition.stats, force=True)
+
+    def _on_detector_physics(self, config) -> None:
+        self.acquisition.apply_detector_physics(config)
+        self.experiments.set_detector_physics(config)
+
     def _on_start(self) -> None:
         # New acquisition invalidates any previous reconstruction / analysis.
         self.recon_runner.invalidate_pending()
+        self.physics_runner.invalidate_pending()
         self.reconstruction.invalidate("New acquisition started.")
+        self.detector_physics.clear_visuals()
         self.acquisition.apply_config(self.controls.acquisition_config())
         self.acquisition.start()
         self.controls.set_acquisition_controls_enabled(False)
         self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
+
+    def _on_compare_detector_configurations(self) -> None:
+        ideal_a, ideal_b = self.acquisition.ideal_coincidence_endpoints()
+        degraded_a, degraded_b = self.acquisition.coincidence_endpoints()
+        if ideal_a.shape[0] == 0 and degraded_a.shape[0] == 0:
+            self.detector_physics.show_comparison_message(
+                "Acquire coincidences before comparing ideal and degraded reconstructions."
+            )
+            return
+        config = ReconstructionConfig(
+            method=self.detector_physics.comparison_method(),
+            n_iterations=self.detector_physics.comparison_iterations(),
+            image_size=96,
+            n_theta=64,
+            n_s=96,
+            filter_name="hann",
+        ).clamp()
+        started = self.physics_runner.start(ideal_a, ideal_b, degraded_a, degraded_b, config)
+        if not started:
+            self.detector_physics.show_comparison_message("A comparison is already running.")
+            return
+        self.detector_physics.show_comparison_busy(
+            f"Reconstructing ideal and degraded data with {config.method.upper()}…"
+        )
+
+    def _on_physics_comparison_finished(self, result) -> None:
+        self.detector_physics.show_comparison(result.ideal, result.degraded)
 
     def _on_reset_acq(self) -> None:
         self.acquisition.reset()
@@ -200,12 +275,16 @@ class MainWindow(QMainWindow):
 
     def _on_acq_reset_done(self) -> None:
         self.recon_runner.invalidate_pending()
+        self.physics_runner.invalidate_pending()
         self.detector_view.clear_events()
         self.reconstruction.set_acquired_phantom(None)
         self.reconstruction.invalidate("Acquisition data cleared.")
+        self.detector_physics.clear_visuals()
+        self.detector_physics.update_stats(self.acquisition.stats, np.zeros(0))
 
     def _on_stats(self, stats: AcquisitionStats) -> None:
         self.controls.update_stats(stats)
+        self._push_physics_stats(stats)
         self.reconstruction.update_coincidence_count(stats.coincidences)
         # If acquisition keeps growing after a mid-run recon, mark output stale.
         prior = self.reconstruction._result
@@ -399,6 +478,7 @@ class MainWindow(QMainWindow):
         self.recon_runner.shutdown(timeout_ms=10_000)
         self.analysis_runner.shutdown(timeout_ms=10_000)
         self.experiment_runner.shutdown(timeout_ms=10_000)
+        self.physics_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
     def _reset_splitter(self) -> None:
@@ -418,8 +498,9 @@ class MainWindow(QMainWindow):
                 "<b>Stage 3:</b> measured sinogram + filtered backprojection (FBP).<br>"
                 "<b>Stage 4:</b> localization, contrast / TBR, count comparison.<br>"
                 "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br>"
-                "<b>Stage 6:</b> repeated image-quality experiments.<br><br>"
-                "Idealized model: no attenuation, scatter, or positron range.<br>"
+                "<b>Stage 6:</b> repeated image-quality experiments.<br>"
+                "<b>Stage 7:</b> optional energy, timing, randoms, and simplified scatter.<br><br>"
+                "Detector effects are off unless you enable them.<br>"
                 "Not a clinical diagnostic tool."
             ),
         )
