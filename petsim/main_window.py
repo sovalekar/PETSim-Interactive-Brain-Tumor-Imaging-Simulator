@@ -8,8 +8,11 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QTabWidget,
@@ -44,8 +47,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(
             f"PETSim — Interactive Brain Tumor Imaging Simulator v{__version__}"
         )
-        self.resize(1380, 840)
-        self.setMinimumSize(1040, 660)
+        self.resize(1380, 860)
+        self.setMinimumSize(960, 620)
 
         self.acquisition = AcquisitionController(self)
         self.recon_runner = ReconstructionRunner(self)
@@ -67,7 +70,8 @@ class MainWindow(QMainWindow):
         self.acquisition.apply_config(self.controls.acquisition_config())
         self._refresh_detector(state)
         self.statusBar().showMessage(
-            "Ready — Stage 6: reconstruct, or open Image Quality Experiments."
+            "Ready — acquire on the Workstation, then reconstruct. "
+            "Open the numbered sections for physics, experiments, and corrections."
         )
 
     def _build_menu(self) -> None:
@@ -92,42 +96,76 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
-        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
-        header = QLabel("PETSim Workstation")
-        header.setObjectName("PanelTitle")
-        outer.addWidget(header)
+        self.experiments = ExperimentPanel()
+        self.detector_physics = DetectorPhysicsPanel()
+        self.corrections = CorrectionsPanel()
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
+        self.splitter.setHandleWidth(6)
 
         self.controls = ControlsPanel()
         self.detector_view = DetectorView()
         self.reconstruction = ReconstructionPanel()
+        self.controls.setMinimumWidth(240)
+        self.detector_view.setMinimumWidth(300)
+        self.reconstruction.setMinimumWidth(320)
 
         self.splitter.addWidget(self.controls)
         self.splitter.addWidget(self.detector_view)
         self.splitter.addWidget(self.reconstruction)
-        self.splitter.setStretchFactor(0, 2)
-        self.splitter.setStretchFactor(1, 3)
-        self.splitter.setStretchFactor(2, 3)
-        self.splitter.setSizes([300, 520, 520])
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 5)
+        self.splitter.setStretchFactor(2, 4)
+        self.splitter.setSizes([280, 620, 460])
 
         workstation = QWidget()
         station_layout = QVBoxLayout(workstation)
         station_layout.setContentsMargins(0, 0, 0, 0)
         station_layout.addWidget(self.splitter)
 
-        self.experiments = ExperimentPanel()
-        self.detector_physics = DetectorPhysicsPanel()
-        self.corrections = CorrectionsPanel()
         self.tabs = QTabWidget()
-        self.tabs.addTab(workstation, "Workstation")
-        self.tabs.addTab(self.detector_physics, "Detector Physics")
-        self.tabs.addTab(self.corrections, "PET Corrections & Validation")
-        self.tabs.addTab(self.experiments, "Image Quality Experiments")
+        self.tabs.setDocumentMode(True)
+        pages = (
+            (workstation, "1  Workstation", "Acquire coincidences and reconstruct the current list."),
+            (self.detector_physics, "2  Detector Physics", "Optional energy, timing, randoms, and simplified Compton scatter."),
+            (self.experiments, "3  Image Quality", "Repeated trials of localization, contrast, and noise versus count."),
+            (self.corrections, "4  Corrections", "Random coincidence correction and educational global scatter scaling."),
+        )
+        self._steps = QButtonGroup(self)
+        self._steps.setExclusive(True)
+        bar = QWidget()
+        bar.setObjectName("AppBar")
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(12, 8, 12, 8)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        app_title = QLabel("PETSim")
+        app_title.setObjectName("AppTitle")
+        app_sub = QLabel("Brain-tumor PET workstation")
+        app_sub.setObjectName("AppSubtitle")
+        titles.addWidget(app_title)
+        titles.addWidget(app_sub)
+        bar_layout.addLayout(titles)
+        bar_layout.addSpacing(16)
+        for index, (_page, label, tip) in enumerate(pages):
+            self.tabs.addTab(_page, label)
+            self.tabs.setTabToolTip(index, tip)
+            step = QPushButton(label)
+            step.setObjectName("StepButton")
+            step.setCheckable(True)
+            step.setToolTip(tip)
+            step.setChecked(index == 0)
+            self._steps.addButton(step, index)
+            bar_layout.addWidget(step)
+        bar_layout.addStretch(1)
+        self._steps.idClicked.connect(self.tabs.setCurrentIndex)
         self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.tabs.currentChanged.connect(self._sync_step)
+        outer.addWidget(bar)
         outer.addWidget(self.tabs, stretch=1)
 
     def _build_status(self) -> None:
@@ -242,6 +280,11 @@ class MainWindow(QMainWindow):
             self._last_physics_draw = now
             energies = self.acquisition.measured_photon_energies_kev()
         self.detector_physics.update_stats(stats, energies, redraw_plots=redraw)
+
+    def _sync_step(self, index: int) -> None:
+        button = self._steps.button(index)
+        if button is not None:
+            button.setChecked(True)
 
     def _on_tab_changed(self, _index: int) -> None:
         if self._physics_tab_visible():
@@ -579,7 +622,7 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _reset_splitter(self) -> None:
-        self.splitter.setSizes([300, 520, 520])
+        self.splitter.setSizes([280, 620, 460])
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
@@ -597,7 +640,9 @@ class MainWindow(QMainWindow):
                 "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br>"
                 "<b>Stage 6:</b> repeated image-quality experiments.<br>"
                 "<b>Stage 7:</b> optional energy, timing, randoms, and simplified scatter.<br>"
-                "<b>Stage 8:</b> random coincidence correction and global scatter scaling.<br><br>"
+                "<b>Stage 8:</b> random coincidence correction and global scatter scaling.<br>"
+                "<b>Stage 9:</b> workstation layout. Scatter scaling is still a count scale, "
+                "not a spatial scatter correction.<br><br>"
                 "Detector effects are off unless you enable them.<br>"
                 "Not a clinical diagnostic tool."
             ),

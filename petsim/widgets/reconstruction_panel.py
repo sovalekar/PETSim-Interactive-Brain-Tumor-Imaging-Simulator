@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -27,6 +28,7 @@ from petsim.analysis.pipeline import QuantitativeAnalysisResult
 from petsim.analysis.roi import ROIMasks
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
 from petsim.theme import COLORS
+from petsim.widgets.chrome import kind_chip
 
 
 def _fmt_xy(xy: tuple[float, float] | None) -> str:
@@ -622,8 +624,8 @@ class ReconstructionPanel(QFrame):
         root.addWidget(title)
 
         subtitle = QLabel(
-            "Stage 3–5: FBP or MLEM from measured coincidences, then quantitative "
-            "comparison (educational metrics only)."
+            "FBP or MLEM from the measured coincidences. Purple values are the "
+            "known phantom. Amber values are estimates. Green values are image measurements."
         )
         subtitle.setObjectName("HintLabel")
         subtitle.setWordWrap(True)
@@ -647,6 +649,10 @@ class ReconstructionPanel(QFrame):
         self._method.addItems(
             ["Filtered Backprojection (FBP)", "Maximum Likelihood EM (MLEM)"]
         )
+        self._method.setToolTip(
+            "FBP filters the sinogram and backprojects it. MLEM iteratively updates "
+            "a nonnegative image to raise the Poisson likelihood. MLEM is slower."
+        )
         self._method.currentTextChanged.connect(self._on_method_changed)
         row.addWidget(self._method, stretch=1)
         layout.addLayout(row)
@@ -656,6 +662,9 @@ class ReconstructionPanel(QFrame):
         iter_layout.setContentsMargins(0, 0, 0, 0)
         iter_layout.addWidget(QLabel("Iterations"))
         self._iterations = QComboBox()
+        self._iterations.setToolTip(
+            "How many MLEM updates to run. More iterations can fit noise. This does not apply to FBP."
+        )
         self._iterations.addItems(["1", "5", "10", "20", "50"])
         self._iterations.setCurrentText("10")
         iter_layout.addWidget(self._iterations, stretch=1)
@@ -667,6 +676,9 @@ class ReconstructionPanel(QFrame):
         filter_layout.setContentsMargins(0, 0, 0, 0)
         filter_layout.addWidget(QLabel("Filter"))
         self._filter = QComboBox()
+        self._filter.setToolTip(
+            "Ramp keeps high frequencies. Hann rolls them off and usually looks smoother. FBP only."
+        )
         self._filter.addItems(["Hann", "Ramp"])
         self._filter.setCurrentText("Hann")
         self._filter.currentTextChanged.connect(self._on_recon_param_changed)
@@ -713,6 +725,13 @@ class ReconstructionPanel(QFrame):
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
 
+        self._recon_progress = QProgressBar()
+        self._recon_progress.setRange(0, 100)
+        self._recon_progress.setValue(0)
+        self._recon_progress.setFormat("Idle")
+        self._recon_progress.setToolTip("MLEM iteration progress. FBP finishes in one step, so this stays idle.")
+        layout.addWidget(self._recon_progress)
+
         self._run_btn = QPushButton("Run Reconstruction")
         self._run_btn.setObjectName("PrimaryButton")
         self._run_btn.setEnabled(False)
@@ -725,7 +744,9 @@ class ReconstructionPanel(QFrame):
         layout.addWidget(self._compare_algs_btn)
 
         self._cancel_btn = QPushButton("Cancel Reconstruction")
+        self._cancel_btn.setObjectName("DangerButton")
         self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setToolTip("Stop the reconstruction thread. A partial MLEM image is not kept.")
         self._cancel_btn.clicked.connect(self.cancel_requested.emit)
         layout.addWidget(self._cancel_btn)
 
@@ -795,6 +816,9 @@ class ReconstructionPanel(QFrame):
         ):
             loc_grid.addWidget(QLabel(label), r, 0)
             loc_grid.addWidget(widget, r, 1)
+        loc_grid.addWidget(kind_chip("truth"), 0, 2)
+        loc_grid.addWidget(kind_chip("estimated"), 1, 2)
+        loc_grid.addWidget(kind_chip("measured"), 2, 2)
         analysis_layout.addWidget(loc_box)
 
         contrast_box = QGroupBox("Image Contrast")
@@ -813,6 +837,8 @@ class ReconstructionPanel(QFrame):
         ):
             contrast_grid.addWidget(QLabel(label), r, 0)
             contrast_grid.addWidget(widget, r, 1)
+        for row_index in range(4):
+            contrast_grid.addWidget(kind_chip("measured"), row_index, 2)
         analysis_layout.addWidget(contrast_box)
 
         noise_box = QGroupBox("Image Noise")
@@ -820,6 +846,10 @@ class ReconstructionPanel(QFrame):
         self._n_cv = QLabel("—")
         noise_grid.addWidget(QLabel("Background coefficient of variation"), 0, 0)
         noise_grid.addWidget(self._n_cv, 0, 1)
+        noise_grid.addWidget(kind_chip("measured"), 0, 2)
+        self._n_cv.setToolTip(
+            "Standard deviation of the background ROI divided by its mean. A measured noise score, not a clinical SUV."
+        )
         analysis_layout.addWidget(noise_box)
 
         algo_box = QGroupBox("FBP versus MLEM")
@@ -909,8 +939,13 @@ class ReconstructionPanel(QFrame):
         if busy:
             self._status.setText("Reconstructing… (UI remains responsive)")
             self._run_btn.setText("Running…")
+            self._recon_progress.setRange(0, 0)
+            self._recon_progress.setFormat("Reconstructing…")
         else:
             self._run_btn.setText("Run Reconstruction")
+            self._recon_progress.setRange(0, 100)
+            self._recon_progress.setValue(0)
+            self._recon_progress.setFormat("Idle")
 
     def set_analysis_busy(self, busy: bool) -> None:
         self._analysis_busy = busy
@@ -1107,6 +1142,9 @@ class ReconstructionPanel(QFrame):
             f"MLEM iteration {iteration}/{total} · log L = {ll_text} · "
             f"relative change {rel:.3g}"
         )
+        self._recon_progress.setRange(0, max(int(total), 1))
+        self._recon_progress.setValue(int(iteration))
+        self._recon_progress.setFormat(f"MLEM {iteration}/{total}")
         from types import SimpleNamespace
 
         self.convergence_canvas.show_history(

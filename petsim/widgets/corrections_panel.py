@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QFrame,
     QProgressBar,
+    QHeaderView,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -37,6 +38,7 @@ from petsim.corrections_worker import ComparisonBundle
 from petsim.models.phantom import PhantomState
 from petsim.reconstruction.pipeline import ReconstructionResult
 from petsim.theme import COLORS
+from petsim.widgets.chrome import section_row
 
 MODE_TITLES = {
     MODE_IDEAL: "Ideal",
@@ -231,6 +233,8 @@ class CorrectionsPanel(QWidget):
             "Shared color scale. Scatter scaling changes brightness, not shape."
         )
         self._cancel_compare = QPushButton("Cancel comparison")
+        self._cancel_compare.setObjectName("DangerButton")
+        self._cancel_compare.setToolTip("Stop the five-image comparison. Finished images stay until you reset.")
         self._cancel_compare.setEnabled(False)
         controls.addWidget(QLabel("Algorithm"))
         controls.addWidget(self._method)
@@ -265,6 +269,10 @@ class CorrectionsPanel(QWidget):
             ]
         )
         self._table.setMinimumHeight(160)
+        self._table.setAlternatingRowColors(True)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(section_row("Image scores and estimate columns"))
         self._table.setToolTip(
             "Scores are computed from the image in that row. "
             "Localization, TBR, contrast, and CV use Stage 4 ROIs. "
@@ -285,6 +293,7 @@ class CorrectionsPanel(QWidget):
             )
         layout.addWidget(self._table)
 
+        layout.addWidget(section_row("Matched study settings", "parameter"))
         study = QGroupBox("Matched correction study")
         study.setToolTip(
             "Each trial simulates one prompt list, then reconstructs every selected mode from that list."
@@ -327,6 +336,8 @@ class CorrectionsPanel(QWidget):
         buttons = QHBoxLayout()
         self._start_study = QPushButton("Start correction study")
         self._cancel_study = QPushButton("Cancel study")
+        self._cancel_study.setObjectName("DangerButton")
+        self._cancel_study.setToolTip("Stop the matched study. Completed trials remain plotted.")
         self._cancel_study.setEnabled(False)
         self._reset = QPushButton("Reset")
         buttons.addWidget(self._start_study)

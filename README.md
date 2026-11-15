@@ -18,9 +18,23 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **5** | Done | MLEM iterative reconstruction, convergence, and FBP comparison |
 | **6** | Done | Repeated image-quality experiments versus coincidence count |
 | **7** | Done | Energy resolution, timing window, randoms, and simplified Compton scatter |
-| **8** | **This release (v0.8.0)** | Random coincidence correction and educational global scatter scaling |
+| **8** | Done | Random coincidence correction and educational global scatter scaling |
+| **9** | **This release (v0.9.0)** | Workstation layout, shared dark theme, and kind badges |
 
 ---
+
+## Stage 9 overview
+
+The window is one dark workstation theme. A step bar and numbered tabs follow the same order: Workstation, Detector Physics, Image Quality, Corrections. The workstation gives extra width to the detector view and the reconstruction. Controls stay in a scrolling column.
+
+Colored badges mark four kinds of information:
+
+* **Parameter** — a setting that changes the next run
+* **Measured** — a count or score from the acquisition or the image
+* **Estimated** — a model quantity, including the random-count subtraction and the global scatter scale
+* **Ground truth** — a phantom value used only after reconstruction
+
+Global scatter scaling is still one fraction on the prompt sinogram. The corrections tab does not present it as a spatial scatter correction. Long tasks show a progress bar and a cancel button. The scientific calculations are unchanged.
 
 ## Stage 8 overview
 

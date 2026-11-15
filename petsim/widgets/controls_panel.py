@@ -10,12 +10,15 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSlider,
     QVBoxLayout,
     QWidget,
 )
+
+from petsim.widgets.chrome import section_row
 
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
@@ -68,9 +71,8 @@ class ControlsPanel(QFrame):
         root.addWidget(title)
 
         hint = QLabel(
-            "Adjust the synthetic brain phantom, run a PET acquisition "
-            "(annihilations → 511 keV coincidences), then reconstruct with FBP "
-            "in the right-hand panel."
+            "Set the phantom, acquire coincidences, then reconstruct in the "
+            "right panel. Blue badges are settings. Green badges are measured counts."
         )
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
@@ -84,9 +86,7 @@ class ControlsPanel(QFrame):
         form.setSpacing(6)
 
         # --- Brain ---
-        brain_hdr = QLabel("Brain phantom")
-        brain_hdr.setObjectName("SectionLabel")
-        form.addWidget(brain_hdr)
+        form.addWidget(section_row("Brain phantom", "parameter"))
 
         row, self._brain_radius, self._brain_radius_val = _slider_row(
             "Radius", 20, 75, 55, "%"
@@ -102,9 +102,7 @@ class ControlsPanel(QFrame):
         form.addWidget(self._show_outline)
 
         # --- Tumor ---
-        tumor_hdr = QLabel("Tumor")
-        tumor_hdr.setObjectName("SectionLabel")
-        form.addWidget(tumor_hdr)
+        form.addWidget(section_row("Tumor", "parameter"))
 
         self._tumor_enabled = QCheckBox("Enable tumor")
         self._tumor_enabled.setChecked(True)
@@ -124,9 +122,7 @@ class ControlsPanel(QFrame):
         form.addLayout(row)
 
         # --- Acquisition (Stage 2) ---
-        acq_hdr = QLabel("PET acquisition")
-        acq_hdr.setObjectName("SectionLabel")
-        form.addWidget(acq_hdr)
+        form.addWidget(section_row("PET acquisition", "parameter"))
 
         btn_row = QHBoxLayout()
         self._start_btn = QPushButton("Start Acquisition")
@@ -172,9 +168,13 @@ class ControlsPanel(QFrame):
         seed_row.addStretch(1)
         form.addLayout(seed_row)
 
-        stats_hdr = QLabel("Live statistics")
-        stats_hdr.setObjectName("SectionLabel")
-        form.addWidget(stats_hdr)
+        form.addWidget(section_row("Live statistics", "measured"))
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 1000)
+        self._progress.setValue(0)
+        self._progress.setFormat("Idle")
+        self._progress.setToolTip("Fraction of the requested annihilations that have been simulated.")
+        form.addWidget(self._progress)
 
         self._stat_total = QLabel("Annihilations: 0")
         self._stat_coin = QLabel("Coincidences: 0")
@@ -191,9 +191,7 @@ class ControlsPanel(QFrame):
             form.addWidget(lab)
 
         # --- Display ---
-        display_hdr = QLabel("Display")
-        display_hdr.setObjectName("SectionLabel")
-        form.addWidget(display_hdr)
+        form.addWidget(section_row("Display", "parameter"))
 
         cmap_row = QHBoxLayout()
         cmap_row.addWidget(QLabel("Colormap"))
@@ -220,6 +218,22 @@ class ControlsPanel(QFrame):
         defaults_row.addWidget(self._reset_btn)
         defaults_row.addStretch(1)
         root.addLayout(defaults_row)
+
+        self._brain_radius.setToolTip("Brain disk radius as a percent of the field of view.")
+        self._brain_intensity.setToolTip("Relative background uptake of healthy brain tissue.")
+        self._tumor_x.setToolTip("Tumor center, horizontal, in percent of the field of view.")
+        self._tumor_y.setToolTip("Tumor center, vertical, in percent of the field of view.")
+        self._tumor_radius.setToolTip("Tumor disk radius as a percent of the field of view.")
+        self._tumor_intensity.setToolTip("Tumor uptake relative to a reference of 100%.")
+        self._n_events.setToolTip("Number of positron annihilations to simulate.")
+        self._efficiency.setToolTip(
+            "Per-detector efficiency ε. An ideal coincidence needs both photons, so the expected rate scales as ε²."
+        )
+        self._speed.setToolTip("How quickly the acquisition animation advances. Does not change the physics.")
+        self._use_seed.setToolTip("Fix the random number generator so the same acquisition can be repeated.")
+        self._pause_btn.setToolTip("Pause the acquisition. Parameters stay as they are.")
+        self._reset_acq_btn.setToolTip("Discard recorded coincidences and return the counters to zero.")
+        self._start_btn.setToolTip("Simulate annihilations and record coincidences on the detector ring.")
 
         # Wire phantom signals
         for slider in (
@@ -321,6 +335,13 @@ class ControlsPanel(QFrame):
                 f"(expected ε²: {stats.expected_coincidence_percent:.1f}%)"
             )
         self._stat_progress.setText(f"Progress: {stats.progress_percent:.1f}%")
+        self._progress.setValue(int(round(stats.progress_percent * 10)))
+        if stats.running or stats.paused:
+            self._progress.setFormat(f"{stats.progress_percent:.0f}% of annihilations")
+        elif stats.finished:
+            self._progress.setFormat("Acquisition complete")
+        else:
+            self._progress.setFormat("Idle")
 
         # Button enablement mirrors acquisition state.
         if stats.finished:
