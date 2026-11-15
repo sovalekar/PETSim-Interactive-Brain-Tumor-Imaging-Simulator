@@ -136,6 +136,7 @@ class MatchedAcquisition:
     n_accepted: int
     truth_random: int
     truth_scattered: int
+    n_side_window: int = 0
 
 
 def acquire_matched(
@@ -170,21 +171,25 @@ def acquire_matched(
     truth_random = 0
     truth_scattered = 0
     kept = 0
-    for is_random, is_scattered, accepted in zip(
-        buffer.is_random,
-        buffer.is_scattered,
-        buffer.coincidence_flags,
-        strict=True,
+    cutoff = len(buffer.coincidence_flags)
+    for index, (is_random, is_scattered, accepted) in enumerate(
+        zip(
+            buffer.is_random,
+            buffer.is_scattered,
+            buffer.coincidence_flags,
+            strict=True,
+        )
     ):
         if not accepted:
             continue
-        if kept >= target:
-            break
         kept += 1
         if is_random:
             truth_random += 1
         elif is_scattered:
             truth_scattered += 1
+        if kept >= target:
+            cutoff = index + 1
+            break
     return MatchedAcquisition(
         hits_a=hits_a[:target],
         hits_b=hits_b[:target],
@@ -194,6 +199,11 @@ def acquire_matched(
         n_accepted=int(np.count_nonzero(buffer.coincidence_flags)),
         truth_random=truth_random,
         truth_scattered=truth_scattered,
+        n_side_window=buffer.side_window_count(
+            physics.energy_window_low_kev,
+            physics.energy_window_high_kev,
+            limit=cutoff,
+        ),
     )
 
 
@@ -284,6 +294,11 @@ def run_correction_study(
                                         0.0 if mode == MODE_IDEAL else random_fraction * scale
                                     ),
                                     n_detectors=cfg.n_detectors,
+                                    n_side_window=0 if mode == MODE_IDEAL else acquired.n_side_window,
+                                    scatter_probability=0.0 if mode == MODE_IDEAL else scatter_probability,
+                                    photo_low_kev=energy_low,
+                                    photo_high_kev=energy_high,
+                                    energy_fwhm_percent=cfg.energy_fwhm_percent,
                                     cancel=cancel,
                                 )
                                 metrics = score_reconstruction(result, cfg.phantom)

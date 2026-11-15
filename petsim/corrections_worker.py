@@ -45,6 +45,12 @@ class _ComparisonTask(QObject):
         random_fraction: float,
         phantom: PhantomState | None,
         job_id: int,
+        n_side_window: int = 0,
+        scatter_probability: float = 0.0,
+        photo_low_kev: float = 435.0,
+        photo_high_kev: float = 650.0,
+        energy_fwhm_percent: float = 12.0,
+        scatter_angle_sigma_rad: float = 0.6,
     ) -> None:
         super().__init__()
         self._ideal_a = np.asarray(ideal_a, dtype=np.float64)
@@ -56,6 +62,12 @@ class _ComparisonTask(QObject):
         self._random_fraction = float(random_fraction)
         self._phantom = phantom
         self._job_id = int(job_id)
+        self._n_side_window = int(n_side_window)
+        self._scatter_probability = float(scatter_probability)
+        self._photo_low_kev = float(photo_low_kev)
+        self._photo_high_kev = float(photo_high_kev)
+        self._energy_fwhm_percent = float(energy_fwhm_percent)
+        self._scatter_angle_sigma_rad = float(scatter_angle_sigma_rad)
         self._cancel = threading.Event()
 
     def request_cancel(self) -> None:
@@ -71,9 +83,13 @@ class _ComparisonTask(QObject):
                     break
                 hits_a, hits_b = self._degraded_a, self._degraded_b
                 fraction = self._random_fraction
+                scatter_probability = self._scatter_probability
+                n_side_window = self._n_side_window
                 if mode == MODE_IDEAL:
                     hits_a, hits_b = self._ideal_a, self._ideal_b
                     fraction = 0.0
+                    scatter_probability = 0.0
+                    n_side_window = 0
                 self.progress.emit(index, len(CORRECTION_MODES), mode)
                 result = reconstruct_corrected(
                     hits_a,
@@ -82,6 +98,12 @@ class _ComparisonTask(QObject):
                     mode=mode,
                     n_annihilations=self._n_annihilations,
                     random_fraction=fraction,
+                    n_side_window=n_side_window,
+                    scatter_probability=scatter_probability,
+                    photo_low_kev=self._photo_low_kev,
+                    photo_high_kev=self._photo_high_kev,
+                    energy_fwhm_percent=self._energy_fwhm_percent,
+                    scatter_angle_sigma_rad=self._scatter_angle_sigma_rad,
                     cancel=self._cancel.is_set,
                     job_id=self._job_id,
                 )
@@ -93,7 +115,11 @@ class _ComparisonTask(QObject):
             bundle.message = (
                 "Comparison cancelled."
                 if bundle.cancelled
-                else "Comparison finished. Corrections are estimates, not guaranteed improvements."
+                else (
+                    "Comparison finished. Random correction changes the sinogram shape. "
+                    "Scatter scaling is one fraction from the side-window count, so "
+                    "NRMSE, CRC, and localization can stay unchanged."
+                )
             )
             self.finished.emit(bundle)
         except Exception as exc:  # noqa: BLE001
@@ -233,6 +259,12 @@ class CorrectionComparisonRunner(_ThreadOwner):
         n_annihilations: int,
         random_fraction: float,
         phantom: PhantomState | None,
+        n_side_window: int = 0,
+        scatter_probability: float = 0.0,
+        photo_low_kev: float = 435.0,
+        photo_high_kev: float = 650.0,
+        energy_fwhm_percent: float = 12.0,
+        scatter_angle_sigma_rad: float = 0.6,
     ) -> bool:
         task = _ComparisonTask(
             ideal_a,
@@ -244,6 +276,12 @@ class CorrectionComparisonRunner(_ThreadOwner):
             random_fraction=random_fraction,
             phantom=phantom,
             job_id=0,
+            n_side_window=n_side_window,
+            scatter_probability=scatter_probability,
+            photo_low_kev=photo_low_kev,
+            photo_high_kev=photo_high_kev,
+            energy_fwhm_percent=energy_fwhm_percent,
+            scatter_angle_sigma_rad=scatter_angle_sigma_rad,
         )
         return self._launch(task)
 

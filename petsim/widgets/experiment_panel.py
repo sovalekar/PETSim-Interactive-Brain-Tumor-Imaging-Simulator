@@ -169,7 +169,7 @@ class ExperimentPanel(QWidget):
             "Error bars are the standard deviation across independent acquisitions, "
             "not MLEM convergence and not clinical performance. FBP may pre-smooth "
             "the sinogram; MLEM uses unsmoothed counts from the same trial. "
-            "Corrected versus uncorrected studies are on the PET Corrections & Validation tab."
+            "Random correction and scatter scaling are on the PET Corrections & Validation tab."
         )
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)

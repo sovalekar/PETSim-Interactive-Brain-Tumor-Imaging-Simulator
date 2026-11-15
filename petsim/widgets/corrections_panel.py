@@ -1,4 +1,4 @@
-"""Stage 8 comparison of ideal, degraded, and corrected reconstructions."""
+"""Stage 8 comparison of ideal, uncorrected, random-corrected, and scatter-scaled images."""
 
 from __future__ import annotations
 
@@ -40,10 +40,10 @@ from petsim.theme import COLORS
 
 MODE_TITLES = {
     MODE_IDEAL: "Ideal",
-    MODE_UNCORRECTED: "Degraded, uncorrected",
-    MODE_RANDOM: "Random corrected",
-    MODE_SCATTER: "Scatter corrected",
-    MODE_BOTH: "Random and scatter corrected",
+    MODE_UNCORRECTED: "Uncorrected",
+    MODE_RANDOM: "Random correction",
+    MODE_SCATTER: "Scatter scaling",
+    MODE_BOTH: "Random + scatter scale",
 }
 DISPLAY_MODES = (
     MODE_IDEAL,
@@ -193,16 +193,23 @@ class CorrectionsPanel(QWidget):
         title.setObjectName("PanelTitle")
         layout.addWidget(title)
         hint = QLabel(
-            "Random correction subtracts the expected uniform crystal-pair sinogram "
-            "at the configured random rate. Scatter correction subtracts a smooth "
-            "tail-scaled background. Neither estimator sees event labels or the "
-            "tumor position. A correction is not guaranteed to improve every metric. "
-            "Timing acceptance from Stage 7 is unchanged and is not time-of-flight reconstruction."
+            "Random coincidence correction subtracts a uniform crystal-pair background "
+            "at the configured rate. That changes the sinogram’s shape. "
+            "Global scatter scaling is a simplified educational approximation: a "
+            "300–420 keV side window estimates how many photopeak prompts are scattered, "
+            "and every remaining bin is multiplied by that one fraction. It estimates "
+            "the total, not the spatial distribution. NRMSE, CRC, and localization "
+            "error divide out a positive scale, so those scores can stay the same "
+            "while the shared color scale shows a dimmer image. Neither step reads "
+            "event labels or the tumor position."
         )
         hint.setWordWrap(True)
         hint.setObjectName("HintLabel")
         hint.setToolTip(
-            "Prompts are clipped at zero before FBP and MLEM. "
+            "Total contamination is a count. A spatial correction would be a "
+            "different sinogram shape. The side-window lines are broader than the "
+            "small-angle scatter that stays in the photopeak, so they are not used "
+            "as that shape. Prompts are clipped at zero before FBP and MLEM. "
             "RMSE uses a nonnegative least-squares scale against the phantom raster. "
             "NRMSE divides that RMSE by the RMS of the activity map."
         )
@@ -219,8 +226,9 @@ class CorrectionsPanel(QWidget):
         self._compare = QPushButton("Compare five reconstructions")
         self._compare.setObjectName("PrimaryButton")
         self._compare.setToolTip(
-            "Ideal, degraded, random-corrected, scatter-corrected, and combined. "
-            "Same acquisition. Shared color scale."
+            "Ideal, uncorrected, random coincidence correction, global scatter "
+            "scaling, and both. Same acquisition and the same algorithm. "
+            "Shared color scale. Scatter scaling changes brightness, not shape."
         )
         self._cancel_compare = QPushButton("Cancel comparison")
         self._cancel_compare.setEnabled(False)
@@ -240,15 +248,41 @@ class CorrectionsPanel(QWidget):
         self.comparison_canvas.setMinimumHeight(240)
         layout.addWidget(self.comparison_canvas)
 
-        self._table = QTableWidget(0, 9)
+        self._table = QTableWidget(0, 11)
         self._table.setHorizontalHeaderLabels(
-            ["Mode", "Loc. error", "TBR", "Contrast", "Bg CV", "RMSE", "NRMSE", "CRC", "Runtime (s)"]
+            [
+                "Mode",
+                "Loc. error",
+                "TBR",
+                "Contrast",
+                "Bg CV",
+                "RMSE",
+                "NRMSE",
+                "CRC",
+                "Runtime (s)",
+                "Random counts",
+                "Scatter counts",
+            ]
         )
         self._table.setMinimumHeight(160)
         self._table.setToolTip(
+            "Scores are computed from the image in that row. "
             "Localization, TBR, contrast, and CV use Stage 4 ROIs. "
-            "RMSE and NRMSE are scale-normalized. CRC is measured contrast divided by phantom-ROI contrast."
+            "RMSE and NRMSE are scale-normalized, so a global scatter scale "
+            "does not move them. CRC is measured contrast divided by phantom-ROI contrast."
         )
+        random_header = self._table.horizontalHeaderItem(9)
+        scatter_header = self._table.horizontalHeaderItem(10)
+        if random_header is not None:
+            random_header.setToolTip(
+                "Expected random coincidences removed from the sinogram. "
+                "This subtraction changes the spatial distribution."
+            )
+        if scatter_header is not None:
+            scatter_header.setToolTip(
+                "Estimated photopeak scatter total from the side window. "
+                "Applied as one scale on every bin, not as a spatial template."
+            )
         layout.addWidget(self._table)
 
         study = QGroupBox("Matched correction study")
@@ -310,11 +344,14 @@ class CorrectionsPanel(QWidget):
         layout.addWidget(self._study_status)
 
         grid = QGridLayout()
-        self.plot_modes = _Plot("Corrected vs uncorrected", "NRMSE")
+        self.plot_modes = _Plot("Modes at the strongest contamination", "NRMSE")
         self.plot_random = _Plot("Contrast vs random contamination", "Contrast")
         self.plot_scatter = _Plot("Localization error vs scatter", "Error (FOV)")
         self.plot_counts = _Plot("Image quality vs coincidence count", "NRMSE")
-        self.plot_modes.setToolTip("NRMSE by correction mode at the highest random and scatter settings in the study.")
+        self.plot_modes.setToolTip(
+            "NRMSE by mode at the highest random and scatter settings. "
+            "Scatter scaling can match the uncorrected NRMSE because NRMSE removes a global scale."
+        )
         self.plot_random.setToolTip("Relative contrast versus random probability. Error bars are the sample standard deviation across trials.")
         self.plot_scatter.setToolTip("Tumor localization error versus scatter probability.")
         self.plot_counts.setToolTip("Scale-normalized RMSE versus accepted coincidence count. This study uses one count unless you change it.")
@@ -422,7 +459,7 @@ class CorrectionsPanel(QWidget):
 
     def _fill_table(self, rows: list[tuple[str, ImageQualityMetrics | None, ReconstructionResult | None]]) -> None:
         self._table.setRowCount(len(rows))
-        for row_index, (name, metrics, _result) in enumerate(rows):
+        for row_index, (name, metrics, result) in enumerate(rows):
             values = [
                 name,
                 _fmt(None if metrics is None else metrics.localization_error, 4),
@@ -433,6 +470,8 @@ class CorrectionsPanel(QWidget):
                 _fmt(None if metrics is None else metrics.nrmse),
                 _fmt(None if metrics is None else metrics.crc),
                 _fmt(None if metrics is None else metrics.runtime_s, 2),
+                _fmt(None if result is None else result.random_estimate_counts, 0),
+                _fmt(None if result is None else result.scatter_estimate_counts, 0),
             ]
             for column, value in enumerate(values):
                 self._table.setItem(row_index, column, QTableWidgetItem(value))
@@ -481,7 +520,7 @@ class CorrectionsPanel(QWidget):
         if mode_x:
             self.plot_modes.show_series(
                 {"NRMSE": (np.asarray(mode_x), np.asarray(mode_mean), np.asarray(mode_std))},
-                "Mode index (ideal, uncorrected, random, scatter, both)",
+                "Mode index (ideal, uncorrected, random, scatter scale, both)",
             )
         else:
             self.plot_modes.show_placeholder("This study did not include the reference mode slice.")

@@ -303,6 +303,7 @@ class MainWindow(QMainWindow):
             return
         physics = self.acquisition.active_detector_physics()
         fraction = physics.random_fraction if physics.enabled else 0.0
+        scatter_probability = physics.scatter_probability if physics.enabled else 0.0
         config = ReconstructionConfig(
             method=self.corrections.comparison_method(),
             n_iterations=self.corrections.comparison_iterations(),
@@ -322,6 +323,12 @@ class MainWindow(QMainWindow):
             n_annihilations=self.acquisition.annihilation_count(),
             random_fraction=fraction,
             phantom=self.acquisition.acquired_phantom_state,
+            n_side_window=self.acquisition.side_window_count(),
+            scatter_probability=scatter_probability,
+            photo_low_kev=physics.energy_window_low_kev,
+            photo_high_kev=physics.energy_window_high_kev,
+            energy_fwhm_percent=physics.energy_fwhm_percent,
+            scatter_angle_sigma_rad=physics.scatter_angle_sigma_rad,
         )
         if not started:
             self.corrections.show_comparison_message("A correction comparison is already running.")
@@ -590,7 +597,7 @@ class MainWindow(QMainWindow):
                 "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br>"
                 "<b>Stage 6:</b> repeated image-quality experiments.<br>"
                 "<b>Stage 7:</b> optional energy, timing, randoms, and simplified scatter.<br>"
-                "<b>Stage 8:</b> estimated random and scatter corrections.<br><br>"
+                "<b>Stage 8:</b> random coincidence correction and global scatter scaling.<br><br>"
                 "Detector effects are off unless you enable them.<br>"
                 "Not a clinical diagnostic tool."
             ),

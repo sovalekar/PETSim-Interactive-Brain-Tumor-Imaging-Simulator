@@ -1,5 +1,6 @@
-"""Educational random and scatter corrections for Stage 8.
+"""Educational random correction and global scatter scaling for Stage 8.
 
-These estimators do not read per-event truth labels. Evaluation metrics may
-use the phantom afterwards. Nothing here is a clinical correction.
+Scatter scaling estimates a total count and applies one fraction. It is
+not a spatial scatter correction. These estimators do not read per-event
+truth labels. Evaluation metrics may use the phantom afterwards.
 """

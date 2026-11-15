@@ -57,6 +57,12 @@ def reconstruct_corrected(
     random_fraction: float = 0.0,
     n_detectors: int = 48,
     ring_radius: float = 0.92,
+    n_side_window: int = 0,
+    scatter_probability: float = 0.0,
+    photo_low_kev: float = 435.0,
+    photo_high_kev: float = 650.0,
+    energy_fwhm_percent: float = 12.0,
+    scatter_angle_sigma_rad: float = 0.6,
     progress: ProgressCallback | None = None,
     cancel: CancelCallback | None = None,
     job_id: int = 0,
@@ -90,7 +96,7 @@ def reconstruct_corrected(
         n_s=cfg.n_s,
         s_max=cfg.s_max,
     )
-    corrected, _random_est, _scatter_est = apply_sinogram_corrections(
+    corrected, random_est, scatter_est = apply_sinogram_corrections(
         measured.data,
         correct_random=flags[0],
         correct_scatter=flags[1],
@@ -100,7 +106,15 @@ def reconstruct_corrected(
         n_detectors=n_detectors,
         ring_radius=ring_radius,
         s_max=cfg.s_max,
+        n_side_window=0 if mode == MODE_IDEAL else n_side_window,
+        scatter_probability=0.0 if mode == MODE_IDEAL else scatter_probability,
+        photo_low_kev=photo_low_kev,
+        photo_high_kev=photo_high_kev,
+        energy_fwhm_percent=energy_fwhm_percent,
+        scatter_angle_sigma_rad=scatter_angle_sigma_rad,
     )
+    random_counts = float(random_est.sum())
+    scatter_counts = float(scatter_est.sum())
     prompt = Sinogram(
         data=corrected,
         theta_edges=measured.theta_edges,
@@ -131,8 +145,11 @@ def reconstruct_corrected(
             job_id=job_id,
             message=(
                 f"{label} · MLEM ({note}) · {n:,} input pairs · "
-                f"prompts clipped at 0 · {runtime:.2f} s"
+                f"random est {random_counts:.0f} · scatter est {scatter_counts:.0f} · "
+                f"{runtime:.2f} s"
             ),
+            random_estimate_counts=random_counts,
+            scatter_estimate_counts=scatter_counts,
         )
 
     fbp_sino = prompt
@@ -163,18 +180,21 @@ def reconstruct_corrected(
         job_id=job_id,
         message=(
             f"{label} · FBP ({cfg.filter_name}) · {n:,} input pairs · "
-            f"prompts clipped at 0 · {runtime:.2f} s"
+            f"random est {random_counts:.0f} · scatter est {scatter_counts:.0f} · "
+            f"{runtime:.2f} s"
         ),
+        random_estimate_counts=random_counts,
+        scatter_estimate_counts=scatter_counts,
     )
 
 
 def _mode_label(mode: str) -> str:
     return {
         MODE_IDEAL: "Ideal",
-        MODE_UNCORRECTED: "Degraded, uncorrected",
-        MODE_RANDOM: "Random corrected",
-        MODE_SCATTER: "Scatter corrected",
-        MODE_BOTH: "Random and scatter corrected",
+        MODE_UNCORRECTED: "Uncorrected",
+        MODE_RANDOM: "Random correction",
+        MODE_SCATTER: "Scatter scaling",
+        MODE_BOTH: "Random + scatter scale",
     }.get(mode, mode)
 
 

@@ -18,13 +18,15 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **5** | Done | MLEM iterative reconstruction, convergence, and FBP comparison |
 | **6** | Done | Repeated image-quality experiments versus coincidence count |
 | **7** | Done | Energy resolution, timing window, randoms, and simplified Compton scatter |
-| **8** | **This release (v0.8.0)** | Estimated random and scatter corrections, matched validation |
+| **8** | **This release (v0.8.0)** | Random coincidence correction and educational global scatter scaling |
 
 ---
 
 ## Stage 8 overview
 
-The **PET Corrections & Validation** tab compares five reconstructions of one acquisition: ideal, degraded and uncorrected, random-corrected, scatter-corrected, and both corrections. FBP and MLEM both receive the corrected prompt sinogram. Prompts are clipped at zero before either algorithm. The original uncorrected image is kept in the comparison.
+The **PET Corrections & Validation** tab compares five reconstructions of one acquisition: ideal, uncorrected, random coincidence correction, global scatter scaling, and both. FBP and MLEM receive the same corrected prompt sinogram for a given mode. Prompts are clipped at zero before either algorithm. The uncorrected image stays in the comparison.
+
+### Random coincidence correction
 
 Random correction subtracts
 
@@ -32,15 +34,37 @@ Random correction subtracts
 \mu_R = \rho N_{\text{annihilations}}
 \]
 
-spread over every unordered crystal pair. \(\rho\) is the random probability the acquisition was configured with. The estimator does not look at which events were random. If detector effects were off, \(\rho\) is treated as zero.
+spread over every unordered crystal pair. \(\rho\) is the random probability the acquisition was configured with. The estimator does not look at which events were random. If detector effects were off, \(\rho\) is treated as zero. Because the background is uniform in crystal pairs and the brain is not, this subtraction changes the sinogram’s shape. The table’s **Random counts** column is \(\mu_R\).
 
-Scatter correction, after that subtraction when both are enabled, smooths the nonnegative residual and scales it so the bins with \(|s| \ge 0.78\) match. That tail cut is scanner geometry, not the phantom radius. It is not a clinical scatter correction. Scatter-only mode can mistake flat randoms for scatter.
+Assumptions: the configured \(\rho\) is the insertion probability, pairs are uniform, every random is accepted, and crystals are equally efficient. This is not a delayed-coincidence measurement.
 
-Metrics may use the phantom after reconstruction. RMSE is computed after a nonnegative least-squares scale \(\alpha\) that aligns the clipped reconstruction with the phantom raster. NRMSE divides that RMSE by the RMS of the activity map. CRC is measured contrast divided by the contrast of the same ROIs on the phantom raster. None of these are calibrated SUV or Bq/mL errors. A correction is not claimed to improve every score.
+### Global scatter scaling
+
+Scatter handling is a simplified educational approximation of the **total** photopeak scatter count. It is not a spatial scatter correction.
+
+A witness coincidence has one photon in 300–420 keV and the other inside the acquisition photopeak (default 435–650 keV). Random records are stored at 511 keV, so they are not witnesses. A phantom-free Monte Carlo of the Stage 7 Compton deflection and energy resolution gives a transfer factor \(k\) from the configured scatter probability. The estimated photopeak scatter count is \(T = k N_w\). After random subtraction, every nonnegative bin of the residual is multiplied by the same fraction \(\min(T / \sum R, 1)\). The table’s **Scatter counts** column is that removed total.
+
+The side-window lines are not subtracted as a map. They are broader than the small-angle scatter the photopeak still accepts. A mixture of the side-window sinogram and the prompt sinogram does not fit the true photopeak-scatter distribution better than the prompts alone, so those measurements do not support a spatial template. If the acquisition window already starts below about 425 keV, there is no side window left under it and the estimate is zero.
+
+### Why some scores do not move
+
+RMSE is computed after a nonnegative least-squares scale \(\alpha\) that aligns the clipped reconstruction with the phantom raster. NRMSE divides that RMSE by the RMS of the activity map. CRC is measured contrast divided by the contrast of the same ROIs on the phantom raster. Localization uses the peak inside the search window. A positive global scale divides out of NRMSE, CRC, contrast, background CV, and localization error. On the shared color scale the scatter-scaled image is dimmer because counts were removed. That is the limit of these measurements. None of the scores are calibrated SUV or Bq/mL errors, and a step is not claimed to improve every score.
+
+### Validation
+
+Labels and tumor coordinates are used only after reconstruction, in the metrics and in tests. The estimators do not read them.
+
+Checked behavior:
+
+* With scatter and no randoms, the scatter count follows the labeled photopeak-scatter count (within 30% in the automated cases) and the random count stays zero.
+* With randoms and no scatter, the side-window count stays near zero, so scatter scaling does not copy the random estimate.
+* Scatter scaling leaves the prompt sinogram proportional to the input. FBP and MLEM receive that same sinogram. Scale-free scores stay with the uncorrected image.
+* Random correction changes bin ratios. FBP and MLEM receive the same corrected sinogram for each mode.
+* The true photopeak-scatter sinogram stays closer to the prompts than to the side-window sinogram. Subtracting the side-window shape was tried and rejected because it cuts into the brain.
 
 The matched study simulates each prompt list once, then reconstructs every selected mode from that list. The original Image Quality Experiments tab is unchanged.
 
-Stage 7 timing acceptance is still only an accept/reject cut. There is no time-of-flight reconstruction.
+Stage 7 timing acceptance is still only an accept/reject cut. There is no time-of-flight reconstruction, attenuation correction, or delayed-window random measurement.
 
 ---
 
