@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -25,6 +26,7 @@ from petsim.widgets.chrome import CollapsibleSection, MetricCard
 
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
+from petsim.physics.attenuation import AttenuationConfig
 
 
 def _slider_row(
@@ -77,6 +79,8 @@ class ControlsPanel(QFrame):
     display_changed = Signal()
     # Acquisition parameter widgets changed.
     acquisition_config_changed = Signal(object)  # AcquisitionConfig
+    attenuation_changed = Signal(object)  # AttenuationConfig
+    attenuation_study_requested = Signal()
     start_acquisition = Signal()
     pause_acquisition = Signal()
     reset_acquisition = Signal()
@@ -192,6 +196,44 @@ class ControlsPanel(QFrame):
         acquisition.content.addWidget(self._progress)
         form.addWidget(acquisition)
 
+        atten = CollapsibleSection("Attenuation", "parameter", expanded=False)
+        self._atten_on = QCheckBox("511 keV tissue attenuation")
+        self._atten_on.setToolTip(
+            "Each photon survives with exp(-μ L) along its path through the brain ellipse. "
+            "μ is a transmission map. It does not use the tumor uptake."
+        )
+        atten.content.addWidget(self._atten_on)
+        self._mu = QDoubleSpinBox()
+        self._mu.setRange(0.0, 0.5)
+        self._mu.setDecimals(3)
+        self._mu.setSingleStep(0.004)
+        self._mu.setValue(0.096)
+        self._mu.setSuffix(" /cm")
+        self._mu.setMinimumWidth(0)
+        self._mu.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._mu.setToolTip("Narrow-beam soft tissue at 511 keV. The default is 0.096 per cm.")
+        self._cm = QDoubleSpinBox()
+        self._cm.setRange(1.0, 30.0)
+        self._cm.setDecimals(1)
+        self._cm.setSingleStep(1.0)
+        self._cm.setValue(10.0)
+        self._cm.setSuffix(" cm")
+        self._cm.setMinimumWidth(0)
+        self._cm.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._cm.setToolTip("Centimeters represented by a field-of-view radius of 1.")
+        atten.content.addWidget(QLabel("μ (cm⁻¹)"))
+        atten.content.addWidget(self._mu)
+        atten.content.addWidget(QLabel("Centimeters per FOV radius"))
+        atten.content.addWidget(self._cm)
+        self._atten_study_btn = QPushButton("Compare attenuation")
+        self._atten_study_btn.setToolTip(
+            "Uses the same emissions and detection attempts. "
+            "Shows the μ map, the ideal image, the attenuated image, and the corrected image. "
+            "Correction reweights measured counts. It does not restore absorbed photons."
+        )
+        atten.content.addWidget(self._atten_study_btn)
+        form.addWidget(atten)
+
         measured = CollapsibleSection("Live statistics", "measured")
         cards = QGridLayout()
         cards.setSpacing(6)
@@ -283,10 +325,16 @@ class ControlsPanel(QFrame):
         self._speed.currentTextChanged.connect(self._emit_acq_config)
         self._use_seed.toggled.connect(self._on_seed_toggled)
         self._seed_edit.editingFinished.connect(self._emit_acq_config)
+        self._atten_on.toggled.connect(self._emit_attenuation)
+        self._mu.valueChanged.connect(self._emit_attenuation)
+        self._cm.valueChanged.connect(self._emit_attenuation)
+        self._brain_radius.valueChanged.connect(self._emit_attenuation)
+        self._atten_study_btn.clicked.connect(self.attenuation_study_requested.emit)
 
         self._building = False
         self._emit_phantom_state()
         self._emit_acq_config()
+        self._emit_attenuation()
         self.update_stats(AcquisitionStats(target_events=5000, detector_efficiency=0.8))
 
     def current_state(self) -> PhantomState:
@@ -307,6 +355,29 @@ class ControlsPanel(QFrame):
             "show_detectors": self._show_detectors.isChecked(),
             "show_labels": self._show_labels.isChecked(),
         }
+
+    def attenuation_config(self) -> AttenuationConfig:
+        return AttenuationConfig(
+            enabled=self._atten_on.isChecked(),
+            mu_per_cm=float(self._mu.value()),
+            cm_per_fov=float(self._cm.value()),
+            brain_radius=self._brain_radius.value() / 100.0,
+        )
+
+    def study_seed(self) -> int:
+        config = self.acquisition_config()
+        if config.use_seed and config.seed is not None:
+            return int(config.seed)
+        return 7
+
+    def set_study_busy(self, busy: bool) -> None:
+        self._atten_study_btn.setEnabled(not busy)
+        self._atten_study_btn.setText("Comparing…" if busy else "Compare attenuation")
+
+    def _emit_attenuation(self, *_args) -> None:
+        if self._building:
+            return
+        self.attenuation_changed.emit(self.attenuation_config())
 
     def acquisition_config(self) -> AcquisitionConfig:
         seed_val: int | None = None

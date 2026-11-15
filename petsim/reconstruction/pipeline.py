@@ -111,6 +111,7 @@ def reconstruct_from_endpoints(
     progress=None,
     cancel=None,
     job_id: int = 0,
+    attenuation=None,
 ) -> ReconstructionResult:
     """Run FBP or MLEM from measured coincidence endpoints.
 
@@ -144,6 +145,13 @@ def reconstruct_from_endpoints(
     sino = build_sinogram(
         a, b, n_theta=cfg.n_theta, n_s=cfg.n_s, s_max=cfg.s_max
     )
+    # One weight image, used by exactly one algorithm. FBP scales the measured
+    # sinogram. MLEM keeps those counts and weights the projector instead.
+    survival = None
+    if attenuation is not None and getattr(attenuation, "active", False):
+        from petsim.physics.attenuation import sinogram_survival
+
+        survival = sinogram_survival(sino.theta_centers, sino.s_centers, attenuation)
     if cfg.method == "mlem":
         image, history, cancelled = mlem_reconstruct(
             sino,
@@ -152,6 +160,7 @@ def reconstruct_from_endpoints(
             fov=cfg.fov,
             progress=progress,
             cancel=cancel,
+            survival=survival,
         )
         runtime = time.perf_counter() - started
         note = "cancelled" if cancelled else "complete"
@@ -168,11 +177,24 @@ def reconstruct_from_endpoints(
                 f"MLEM ({note}) · {image.shape[0]}×{image.shape[1]} · "
                 f"{len(history.iterations)}/{cfg.n_iterations} iterations · "
                 f"{n:,} coincidences · unsmoothed sinogram "
-                f"{cfg.n_theta}×{cfg.n_s} · {runtime:.2f} s"
+                f"{cfg.n_theta}×{cfg.n_s}"
+                + (" · attenuation-weighted projector" if survival is not None else "")
+                + f" · {runtime:.2f} s"
             ),
         )
 
-    # FBP keeps its Hann/ramp path, including optional sinogram pre-smoothing.
+    # FBP compensation is a per-bin scale of the measured counts, then the
+    # existing smooth and ramp. It is not a clinical attenuation correction.
+    attenuated_fbp = survival is not None
+    if attenuated_fbp:
+        from petsim.physics.attenuation import compensate_sinogram
+
+        sino = Sinogram(
+            data=compensate_sinogram(sino.data, survival, attenuation.a_min),
+            theta_edges=sino.theta_edges,
+            s_edges=sino.s_edges,
+            n_events=sino.n_events,
+        )
     if cfg.smooth_sigma_s > 0.0 or cfg.smooth_sigma_theta > 0.0:
         sino = Sinogram(
             data=smooth_sinogram_data(
@@ -202,7 +224,12 @@ def reconstruct_from_endpoints(
         message=(
             f"FBP ({cfg.filter_name}) · {cfg.image_size}×{cfg.image_size} · "
             f"{n:,} coincidences · sinogram {cfg.n_theta}×{cfg.n_s} · "
-            f"smooth σs={cfg.smooth_sigma_s:g}, σθ={cfg.smooth_sigma_theta:g} · "
-            f"{runtime:.2f} s"
+            f"smooth σs={cfg.smooth_sigma_s:g}, σθ={cfg.smooth_sigma_theta:g}"
+            + (
+                " · parallel-beam attenuation weight (not a clinical correction)"
+                if attenuated_fbp
+                else ""
+            )
+            + f" · {runtime:.2f} s"
         ),
     )

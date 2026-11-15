@@ -17,6 +17,7 @@ from petsim.physics.acquisition import (
     AcquisitionConfig,
     AcquisitionStats,
 )
+from petsim.physics.attenuation import AttenuationConfig
 from petsim.physics.detector_effects import DetectorPhysicsConfig, account_events
 from petsim.physics.pet_engine import AnnihilationEvent, PETEngine
 
@@ -38,8 +39,10 @@ class AcquisitionController(QObject):
         self.buffer = AcquisitionBuffer()
         self.config = AcquisitionConfig().clamp()
         self.physics = DetectorPhysicsConfig()
-        # Frozen copy used by the acquisition currently in the buffer.
+        self.attenuation = AttenuationConfig()
+        # Frozen copies used by the acquisition currently in the buffer.
         self._active_physics: DetectorPhysicsConfig | None = None
+        self._active_attenuation: AttenuationConfig | None = None
         # Snapshot of the uptake map used for the current acquisition (Stage 3
         # comparison). Cleared on reset; never used as a reconstruction input.
         self.acquired_activity: np.ndarray | None = None
@@ -72,6 +75,26 @@ class AcquisitionController(QObject):
         else:
             self._emit_stats()
 
+    def apply_attenuation(self, config: AttenuationConfig) -> None:
+        """Store the transmission map. A change clears the current coincidences.
+
+        Mixing attenuated and unattenuated batches in one buffer would make
+        the line-integral weights inconsistent with the measured counts.
+        """
+        updated = config.clamp()
+        updated = AttenuationConfig(
+            enabled=updated.enabled,
+            mu_per_cm=updated.mu_per_cm,
+            cm_per_fov=updated.cm_per_fov,
+            brain_radius=self.phantom.state.clamp().brain_radius,
+            a_min=updated.a_min,
+        )
+        if updated == self.attenuation:
+            return
+        self.attenuation = updated
+        if self._stats.total_events > 0 or self._stats.running:
+            self.reset()
+
     def apply_detector_physics(self, config: DetectorPhysicsConfig) -> None:
         """Store settings for the next acquisition.
 
@@ -103,6 +126,13 @@ class AcquisitionController(QObject):
             self.acquired_activity = self.phantom.rasterize().copy()
             self.acquired_phantom_state = self.phantom.state.clamp()
             self._active_physics = self.physics.clamp()
+            self._active_attenuation = AttenuationConfig(
+                enabled=self.attenuation.enabled,
+                mu_per_cm=self.attenuation.mu_per_cm,
+                cm_per_fov=self.attenuation.cm_per_fov,
+                brain_radius=self.phantom.state.clamp().brain_radius,
+                a_min=self.attenuation.a_min,
+            ).clamp()
             self._stats.effects_enabled = self._active_physics.enabled
 
         self._stats.running = True
@@ -132,6 +162,7 @@ class AcquisitionController(QObject):
         self.acquired_activity = None
         self.acquired_phantom_state = None
         self._active_physics = None
+        self._active_attenuation = None
         self._stats = AcquisitionStats(
             total_events=0,
             coincidences=0,
@@ -168,6 +199,12 @@ class AcquisitionController(QObject):
             physics.energy_window_high_kev,
         )
 
+    def active_attenuation(self) -> AttenuationConfig:
+        """Attenuation snapshot for the current buffer, or disabled if none was started."""
+        if self._active_attenuation is not None:
+            return self._active_attenuation
+        return AttenuationConfig(enabled=False)
+
     def active_detector_physics(self) -> DetectorPhysicsConfig:
         """Physics snapshot for the current buffer, or disabled if none was started."""
         if self._active_physics is not None:
@@ -189,6 +226,7 @@ class AcquisitionController(QObject):
             batch_n,
             detector_efficiency=self.config.detector_efficiency,
             physics=physics,
+            attenuation=self._active_attenuation,
         )
         n_coin = self.buffer.extend(events)
         accounted = account_events(events)

@@ -9,7 +9,8 @@ Positron annihilation produces two 511 keV gamma photons:
 Simplifications for this stage (documented for learners):
 
 * Ideal back-to-back emission (exactly opposite directions).
-* No tissue attenuation (both photons always reach the ring geometrically).
+* Tissue attenuation is optional. When no attenuation config is active, both
+  photons still reach the ring geometrically and no extra random numbers are drawn.
 * No positron range (annihilation location = emission location).
 * Independent Bernoulli detection with efficiency ε per photon.
   With detector effects off, ``P(coincidence) = ε²``.
@@ -181,6 +182,7 @@ class PETEngine:
         *,
         detector_efficiency: float = 0.8,
         physics: object | None = None,
+        attenuation: object | None = None,
     ) -> list[AnnihilationEvent]:
         """Simulate ``n_events`` annihilations and return per-event records.
 
@@ -195,6 +197,10 @@ class PETEngine:
             Optional ``DetectorPhysicsConfig``. A missing or disabled config
             does not draw extra random numbers. An enabled config may append
             random-coincidence records after the annihilations.
+        attenuation :
+            Optional ``AttenuationConfig``. Inactive or missing attenuation
+            does not draw random numbers. An active config absorbs each photon
+            with probability ``1 - exp(-μ L)`` after the efficiency draw.
         """
         eps = float(np.clip(detector_efficiency, 0.0, 1.0))
         if n_events <= 0:
@@ -215,9 +221,23 @@ class PETEngine:
         det_a = hit_to_detector_index(hit_a, self.ring.n_detectors)
         det_b = hit_to_detector_index(hit_b, self.ring.n_detectors)
 
-        # Independent Bernoulli trials for each photon.
+        # Independent Bernoulli trials for each photon. Attenuation, when
+        # active, consumes two further draws after these so a disabled run
+        # keeps the historical random stream.
         detected_a = self.rng.random(n_events) < eps
         detected_b = self.rng.random(n_events) < eps
+        cfg = attenuation.clamp() if hasattr(attenuation, "clamp") else attenuation
+        if cfg is not None and getattr(cfg, "active", False):
+            from petsim.physics.attenuation import photon_path_lengths
+
+            length_a, length_b = photon_path_lengths(
+                origins, dir_a, dir_b, hit_a, hit_b, cfg
+            )
+            mu = float(cfg.mu_per_cm) * float(cfg.cm_per_fov)
+            prob_a = np.exp(-np.minimum(mu * length_a, 80.0))
+            prob_b = np.exp(-np.minimum(mu * length_b, 80.0))
+            detected_a = detected_a & (self.rng.random(n_events) < prob_a)
+            detected_b = detected_b & (self.rng.random(n_events) < prob_b)
 
         events: list[AnnihilationEvent] = []
         for i in range(n_events):

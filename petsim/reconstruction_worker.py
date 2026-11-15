@@ -31,6 +31,7 @@ class _ReconTask(QObject):
         job_id: int,
         pair: bool,
         mlem_config: ReconstructionConfig | None = None,
+        attenuation=None,
     ) -> None:
         super().__init__()
         self._hits_a = np.asarray(hits_a, dtype=np.float64)
@@ -39,6 +40,7 @@ class _ReconTask(QObject):
         self._mlem_config = mlem_config
         self._job_id = int(job_id)
         self._pair = bool(pair)
+        self._attenuation = attenuation
         self._cancel = threading.Event()
 
     def request_cancel(self) -> None:
@@ -60,6 +62,7 @@ class _ReconTask(QObject):
                     self._hits_b,
                     fbp_cfg,
                     job_id=self._job_id,
+                    attenuation=self._attenuation,
                 )
                 if self._cancel.is_set():
                     fbp.cancelled = True
@@ -78,6 +81,7 @@ class _ReconTask(QObject):
                     self._hits_a,
                     self._hits_b,
                     mlem_cfg,
+                    attenuation=self._attenuation,
                     progress=self._progress,
                     cancel=self._cancel.is_set,
                     job_id=self._job_id,
@@ -92,6 +96,7 @@ class _ReconTask(QObject):
                 progress=self._progress,
                 cancel=self._cancel.is_set,
                 job_id=self._job_id,
+                attenuation=self._attenuation,
             )
             self.finished.emit(result)
         except Exception as exc:  # noqa: BLE001 — surface any recon failure to UI
@@ -130,6 +135,7 @@ class ReconstructionRunner(QObject):
         *,
         pair: bool = False,
         mlem_config: ReconstructionConfig | None = None,
+        attenuation=None,
     ) -> bool:
         if self._busy:
             return False
@@ -144,6 +150,7 @@ class ReconstructionRunner(QObject):
             job_id=job_id,
             pair=pair,
             mlem_config=mlem_config,
+            attenuation=attenuation,
         )
         self._task.moveToThread(self._thread)
         self._thread.started.connect(self._task.run)
