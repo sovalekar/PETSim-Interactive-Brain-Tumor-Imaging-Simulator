@@ -28,6 +28,7 @@ from petsim.analysis.pipeline import QuantitativeAnalysisResult
 from petsim.analysis.roi import ROIMasks
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
 from petsim.theme import COLORS
+from petsim.widgets.chrome import style_axes
 from petsim.widgets.chrome import kind_chip
 
 
@@ -99,16 +100,12 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
         self._figure = Figure(figsize=(4.2, 4.2), dpi=100, facecolor=COLORS["panel"])
         super().__init__(self._figure)
         self.setParent(parent)
-        self._show_placeholder("Run acquisition, then click Run Reconstruction.")
+        self._show_placeholder(
+            "No reconstruction available\n\nAcquire PET data and run a reconstruction to generate an image."
+        )
 
     def _style_axis(self, ax) -> None:
-        ax.set_facecolor(COLORS["bg"])
-        ax.tick_params(colors=COLORS["text_muted"], labelsize=8)
-        for spine in ax.spines.values():
-            spine.set_color(COLORS["border"])
-        ax.title.set_color(COLORS["text"])
-        ax.xaxis.label.set_color(COLORS["text_muted"])
-        ax.yaxis.label.set_color(COLORS["text_muted"])
+        style_axes(ax)
 
     def _show_placeholder(self, message: str) -> None:
         self._figure.clear()
@@ -454,13 +451,7 @@ class CountComparisonCanvas(FigureCanvasQTAgg):
         )
 
     def _style_axis(self, ax) -> None:
-        ax.set_facecolor(COLORS["bg"])
-        ax.tick_params(colors=COLORS["text_muted"], labelsize=8)
-        for spine in ax.spines.values():
-            spine.set_color(COLORS["border"])
-        ax.title.set_color(COLORS["text"])
-        ax.xaxis.label.set_color(COLORS["text_muted"])
-        ax.yaxis.label.set_color(COLORS["text_muted"])
+        style_axes(ax)
 
     def show_placeholder(self, message: str) -> None:
         self._figure.clear()
@@ -538,11 +529,7 @@ class ConvergenceCanvas(FigureCanvasQTAgg):
         self.show_placeholder("Run MLEM to plot likelihood and relative change.")
 
     def _style_axis(self, ax) -> None:
-        ax.set_facecolor(COLORS["bg"])
-        ax.tick_params(colors=COLORS["text_muted"], labelsize=7)
-        for spine in ax.spines.values():
-            spine.set_color(COLORS["border"])
-        ax.title.set_color(COLORS["text"])
+        style_axes(ax, grid=True)
         ax.xaxis.label.set_color(COLORS["text_muted"])
         ax.yaxis.label.set_color(COLORS["text_muted"])
 
@@ -624,8 +611,8 @@ class ReconstructionPanel(QFrame):
         root.addWidget(title)
 
         subtitle = QLabel(
-            "FBP or MLEM from the measured coincidences. Purple values are the "
-            "known phantom. Amber values are estimates. Green values are image measurements."
+            "Choose FBP or MLEM. Purple values are the known phantom. "
+            "Amber values are estimates. Green values are measurements from the image."
         )
         subtitle.setObjectName("HintLabel")
         subtitle.setWordWrap(True)

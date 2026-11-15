@@ -12,13 +12,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QStatusBar,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
+
+from petsim.widgets.chrome import show_guide
 
 from petsim import __version__
 from petsim.acquisition_controller import AcquisitionController
@@ -69,9 +72,8 @@ class MainWindow(QMainWindow):
         self.acquisition.set_phantom_state(state)
         self.acquisition.apply_config(self.controls.acquisition_config())
         self._refresh_detector(state)
-        self.statusBar().showMessage(
-            "Ready — acquire on the Workstation, then reconstruct. "
-            "Open the numbered sections for physics, experiments, and corrections."
+        self._note(
+            "Ready — configure the phantom, acquire coincidences, then reconstruct."
         )
 
     def _build_menu(self) -> None:
@@ -110,7 +112,7 @@ class MainWindow(QMainWindow):
         self.controls = ControlsPanel()
         self.detector_view = DetectorView()
         self.reconstruction = ReconstructionPanel()
-        self.controls.setMinimumWidth(240)
+        self.controls.setMinimumWidth(300)
         self.detector_view.setMinimumWidth(300)
         self.reconstruction.setMinimumWidth(320)
 
@@ -120,20 +122,24 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 5)
         self.splitter.setStretchFactor(2, 4)
-        self.splitter.setSizes([280, 620, 460])
+        self.splitter.setSizes([340, 600, 420])
 
         workstation = QWidget()
         station_layout = QVBoxLayout(workstation)
         station_layout.setContentsMargins(0, 0, 0, 0)
         station_layout.addWidget(self.splitter)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
+        self.tabs = QStackedWidget()
         pages = (
-            (workstation, "1  Workstation", "Acquire coincidences and reconstruct the current list."),
-            (self.detector_physics, "2  Detector Physics", "Optional energy, timing, randoms, and simplified Compton scatter."),
-            (self.experiments, "3  Image Quality", "Repeated trials of localization, contrast, and noise versus count."),
-            (self.corrections, "4  Corrections", "Random coincidence correction and educational global scatter scaling."),
+            (workstation, "Workstation", "Configure the phantom, acquire coincidences, and reconstruct."),
+            (self.detector_physics, "Detector Physics", "Optional energy, timing, randoms, and a simplified Compton cartoon."),
+            (self.experiments, "Image Quality", "Repeated trials of localization, contrast, and noise versus count."),
+            (
+                self.corrections,
+                "Corrections",
+                "Random coincidence correction and educational global scatter scaling. "
+                "Scatter scaling is one fraction, not a spatial scatter map.",
+            ),
         )
         self._steps = QButtonGroup(self)
         self._steps.setExclusive(True)
@@ -141,19 +147,23 @@ class MainWindow(QMainWindow):
         bar.setObjectName("AppBar")
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(12, 8, 12, 8)
+        bar_layout.setSpacing(10)
+        logo = QLabel("⊕")
+        logo.setObjectName("LogoMark")
+        logo.setToolTip("PETSim")
+        bar_layout.addWidget(logo)
         titles = QVBoxLayout()
         titles.setSpacing(0)
         app_title = QLabel("PETSim")
         app_title.setObjectName("AppTitle")
-        app_sub = QLabel("Brain-tumor PET workstation")
+        app_sub = QLabel("Interactive Brain Tumor Imaging Simulator")
         app_sub.setObjectName("AppSubtitle")
         titles.addWidget(app_title)
         titles.addWidget(app_sub)
         bar_layout.addLayout(titles)
-        bar_layout.addSpacing(16)
-        for index, (_page, label, tip) in enumerate(pages):
-            self.tabs.addTab(_page, label)
-            self.tabs.setTabToolTip(index, tip)
+        bar_layout.addSpacing(12)
+        for index, (page, label, tip) in enumerate(pages):
+            self.tabs.addWidget(page)
             step = QPushButton(label)
             step.setObjectName("StepButton")
             step.setCheckable(True)
@@ -162,6 +172,21 @@ class MainWindow(QMainWindow):
             self._steps.addButton(step, index)
             bar_layout.addWidget(step)
         bar_layout.addStretch(1)
+        self._header_status = QLabel("Ready")
+        self._header_status.setObjectName("HeaderStatus")
+        self._header_status.setMaximumWidth(220)
+        self._header_progress = QProgressBar()
+        self._header_progress.setRange(0, 100)
+        self._header_progress.setValue(0)
+        self._header_progress.setFixedWidth(140)
+        self._header_progress.setFormat("Idle")
+        self._header_progress.setToolTip("Progress of the current acquisition or reconstruction.")
+        help_btn = QPushButton("Guide")
+        help_btn.setToolTip("Short explanations of coincidences, reconstruction, and the metrics.")
+        help_btn.clicked.connect(lambda: show_guide(self))
+        bar_layout.addWidget(self._header_status)
+        bar_layout.addWidget(self._header_progress)
+        bar_layout.addWidget(help_btn)
         self._steps.idClicked.connect(self.tabs.setCurrentIndex)
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.tabs.currentChanged.connect(self._sync_step)
@@ -172,6 +197,20 @@ class MainWindow(QMainWindow):
         status = QStatusBar()
         self.setStatusBar(status)
 
+    def _note(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+        if hasattr(self, "_header_status"):
+            short = message.split("·", 1)[0].strip()
+            if len(short) > 36:
+                short = short[:35].rstrip() + "…"
+            self._header_status.setText(short)
+            self._header_status.setToolTip(message)
+
+    def _set_header_progress(self, value: int, text: str) -> None:
+        self._header_progress.setRange(0, 100)
+        self._header_progress.setValue(max(0, min(100, value)))
+        self._header_progress.setFormat(text)
+
     def _connect_signals(self) -> None:
         self.controls.state_changed.connect(self._on_phantom_changed)
         self.controls.display_changed.connect(self._on_display_changed)
@@ -181,6 +220,7 @@ class MainWindow(QMainWindow):
         self.controls.reset_acquisition.connect(self._on_reset_acq)
 
         self.acquisition.events_simulated.connect(self.detector_view.show_events)
+        self.detector_view.labels_toggled.connect(self._toggle_detector_labels)
         self.acquisition.stats_changed.connect(self._on_stats)
         self.acquisition.finished.connect(self._on_finished)
         self.acquisition.reset_done.connect(self._on_acq_reset_done)
@@ -250,7 +290,7 @@ class MainWindow(QMainWindow):
         self.controls.set_acquisition_controls_enabled(True)
         self._refresh_detector(state)
         tumor = "on" if state.tumor_enabled else "off"
-        self.statusBar().showMessage(
+        self._note(
             f"Phantom updated (acquisition + reconstruction + analysis cleared) · "
             f"brain r={state.brain_radius:.2f} · tumor {tumor}"
         )
@@ -294,7 +334,7 @@ class MainWindow(QMainWindow):
         self.acquisition.apply_detector_physics(config)
         self.experiments.set_detector_physics(config)
         if self.acquisition.stats.total_events > 0:
-            self.statusBar().showMessage(
+            self._note(
                 "Detector settings apply to the next acquisition. "
                 "Events already stored are unchanged."
             )
@@ -407,7 +447,7 @@ class MainWindow(QMainWindow):
     def _on_reset_acq(self) -> None:
         self.acquisition.reset()
         self.controls.set_acquisition_controls_enabled(True)
-        self.statusBar().showMessage("Acquisition reset.")
+        self._note("Acquisition reset.")
 
     def _on_acq_reset_done(self) -> None:
         self.recon_runner.invalidate_pending()
@@ -431,14 +471,16 @@ class MainWindow(QMainWindow):
                 "Acquisition data changed — re-run reconstruction."
             )
         if stats.running:
-            self.statusBar().showMessage(
+            self._set_header_progress(int(stats.progress_percent), f"{stats.progress_percent:.0f}%")
+            self._note(
                 f"Acquiring… {stats.total_events}/{stats.target_events} · "
                 f"coincidences {stats.coincidences} "
                 f"({stats.coincidence_percent:.1f}%, expected "
                 f"{stats.expected_coincidence_percent:.1f}%)"
             )
         elif stats.paused:
-            self.statusBar().showMessage(
+            self._set_header_progress(int(stats.progress_percent), "Paused")
+            self._note(
                 f"Paused at {stats.total_events}/{stats.target_events} annihilations."
             )
 
@@ -446,7 +488,8 @@ class MainWindow(QMainWindow):
         self.controls.set_acquisition_controls_enabled(True)
         self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
         stats = self.acquisition.stats
-        self.statusBar().showMessage(
+        self._set_header_progress(100, "Complete")
+        self._note(
             f"Acquisition complete · {stats.total_events} annihilations · "
             f"{stats.coincidences} coincidences — ready for reconstruction."
         )
@@ -454,7 +497,9 @@ class MainWindow(QMainWindow):
     def _on_run_reconstruction(self, config: ReconstructionConfig) -> None:
         hits_a, hits_b = self.acquisition.coincidence_endpoints()
         if hits_a.shape[0] == 0:
-            self.reconstruction.show_error("No coincidence endpoints available.")
+            self.reconstruction.show_error(
+                "Reconstruction unavailable — acquire coincidence data first."
+            )
             return
         # Ensure comparison uses the activity map tied to this acquisition.
         self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
@@ -466,7 +511,7 @@ class MainWindow(QMainWindow):
             label = f"MLEM ({config.n_iterations} iterations)"
         else:
             label = f"FBP ({config.filter_name})"
-        self.statusBar().showMessage(
+        self._note(
             f"Reconstructing {hits_a.shape[0]:,} coincidences with {label}…"
         )
 
@@ -476,11 +521,15 @@ class MainWindow(QMainWindow):
         if not self.recon_runner.accepts(job_id):
             return
         self.reconstruction.show_mlem_progress(iteration, total, loglik, rel)
+        done = int(round(100 * iteration / max(int(total), 1)))
+        self._set_header_progress(done, f"MLEM {iteration}/{total}")
 
     def _on_compare_algorithms(self, fbp_config: ReconstructionConfig, mlem_config: ReconstructionConfig) -> None:
         hits_a, hits_b = self.acquisition.coincidence_endpoints()
         if hits_a.shape[0] == 0:
-            self.reconstruction.show_error("No coincidence endpoints available.")
+            self.reconstruction.show_error(
+                "Reconstruction unavailable — acquire coincidence data first."
+            )
             return
         self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
         ok = self.recon_runner.start(
@@ -493,7 +542,7 @@ class MainWindow(QMainWindow):
         if not ok:
             self.reconstruction.show_error("Reconstruction already in progress.")
             return
-        self.statusBar().showMessage(
+        self._note(
             f"Comparing FBP and MLEM on {hits_a.shape[0]:,} coincidences "
             f"({mlem_config.n_iterations} MLEM iterations)…"
         )
@@ -503,14 +552,14 @@ class MainWindow(QMainWindow):
             return
         self.reconstruction.show_result(result)
         self._refresh_algorithm_metrics()
-        self.statusBar().showMessage(result.message)
+        self._note(result.message)
 
     def _on_pair_finished(self, fbp: ReconstructionResult, mlem: ReconstructionResult) -> None:
         if not self.recon_runner.accepts(fbp.job_id):
             return
         self.reconstruction.show_algorithm_pair(fbp, mlem)
         self._refresh_algorithm_metrics()
-        self.statusBar().showMessage(f"{fbp.message} | {mlem.message}")
+        self._note(f"{fbp.message} | {mlem.message}")
 
     def _refresh_algorithm_metrics(self) -> None:
         fbp = self.reconstruction._fbp_result
@@ -531,7 +580,7 @@ class MainWindow(QMainWindow):
 
     def _on_recon_failed(self, message: str) -> None:
         self.reconstruction.show_error(message)
-        self.statusBar().showMessage(f"Reconstruction failed: {message}")
+        self._note(f"Reconstruction failed: {message}")
 
     def _on_run_analysis(self) -> None:
         result = self.reconstruction._result
@@ -545,7 +594,7 @@ class MainWindow(QMainWindow):
         if not ok:
             self.reconstruction.show_analysis_error("Analysis already in progress.")
             return
-        self.statusBar().showMessage("Running quantitative analysis…")
+        self._note("Running quantitative analysis…")
 
     def _on_run_count_comparison(self) -> None:
         hits_a, hits_b = self.acquisition.coincidence_endpoints()
@@ -564,22 +613,22 @@ class MainWindow(QMainWindow):
                 "Analysis already in progress."
             )
             return
-        self.statusBar().showMessage(
+        self._note(
             f"Comparing reconstruction quality across coincidence-count levels "
             f"({hits_a.shape[0]:,} available)…"
         )
 
     def _on_analysis_finished(self, analysis) -> None:
         self.reconstruction.show_analysis(analysis)
-        self.statusBar().showMessage(analysis.message)
+        self._note(analysis.message)
 
     def _on_comparison_finished(self, comparison) -> None:
         self.reconstruction.show_count_comparison(comparison)
-        self.statusBar().showMessage(comparison.message)
+        self._note(comparison.message)
 
     def _on_analysis_failed(self, message: str) -> None:
         self.reconstruction.show_analysis_error(message)
-        self.statusBar().showMessage(f"Analysis failed: {message}")
+        self._note(f"Analysis failed: {message}")
 
     def _on_start_experiment(self) -> None:
         config = self.experiments.build_config(self.controls.current_state())
@@ -592,7 +641,7 @@ class MainWindow(QMainWindow):
         if not ok:
             self.experiments.show_error("An experiment is already running.")
             return
-        self.statusBar().showMessage(
+        self._note(
             "Image-quality experiment running "
             f"({', '.join(m.upper() for m in config.methods)}, "
             f"{config.n_trials} trial(s))."
@@ -600,15 +649,15 @@ class MainWindow(QMainWindow):
 
     def _on_experiment_finished(self, result) -> None:
         self.experiments.show_result(result)
-        self.statusBar().showMessage(result.message)
+        self._note(result.message)
 
     def _on_experiment_failed(self, message: str) -> None:
         self.experiments.show_error(message)
-        self.statusBar().showMessage(f"Experiment failed: {message}")
+        self._note(f"Experiment failed: {message}")
 
     def _on_clear_reconstruction(self) -> None:
         self.recon_runner.invalidate_pending()
-        self.statusBar().showMessage("Reconstruction output cleared.")
+        self._note("Reconstruction output cleared.")
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt naming
         """Stop timers/threads before the window is destroyed (macOS-safe)."""
@@ -621,8 +670,12 @@ class MainWindow(QMainWindow):
         self.correction_study_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
+    def _toggle_detector_labels(self) -> None:
+        box = self.controls._show_labels
+        box.setChecked(not box.isChecked())
+
     def _reset_splitter(self) -> None:
-        self.splitter.setSizes([280, 620, 460])
+        self.splitter.setSizes([340, 600, 420])
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
@@ -641,8 +694,9 @@ class MainWindow(QMainWindow):
                 "<b>Stage 6:</b> repeated image-quality experiments.<br>"
                 "<b>Stage 7:</b> optional energy, timing, randoms, and simplified scatter.<br>"
                 "<b>Stage 8:</b> random coincidence correction and global scatter scaling.<br>"
-                "<b>Stage 9:</b> workstation layout. Scatter scaling is still a count scale, "
-                "not a spatial scatter correction.<br><br>"
+                "<b>Stage 9:</b> workstation layout.<br>"
+                "<b>Stage 10:</b> single navigation header and metric cards. "
+                "Scatter scaling is still a count scale, not a spatial scatter correction.<br><br>"
                 "Detector effects are off unless you enable them.<br>"
                 "Not a clinical diagnostic tool."
             ),

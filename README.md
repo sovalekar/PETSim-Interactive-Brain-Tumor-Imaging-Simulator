@@ -19,9 +19,38 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **6** | Done | Repeated image-quality experiments versus coincidence count |
 | **7** | Done | Energy resolution, timing window, randoms, and simplified Compton scatter |
 | **8** | Done | Random coincidence correction and educational global scatter scaling |
-| **9** | **This release (v0.9.0)** | Workstation layout, shared dark theme, and kind badges |
+| **9** | Done | Workstation layout, shared dark theme, and kind badges |
+| **10** | **This release (v0.10.0)** | Single header navigation, metric cards, and a shared plot theme |
 
 ---
+
+## Overview
+
+PETSim is an educational desktop workstation for simulating brain-tumor PET imaging. It samples positron annihilations, flies 511 keV photon pairs to a circular detector, optionally applies a simplified detector model, and reconstructs the activity with filtered backprojection or MLEM. Quantitative scores compare the image with the known phantom. Nothing in the program is clinically validated, and the scores are not SUV or Bq/mL.
+
+The window has one header. It holds the section navigation, a short status line, a progress indicator, and a Guide button. The four sections are Workstation, Detector Physics, Image Quality, and Corrections. Badges mark parameters, measurements, estimates, and ground truth.
+
+## Features
+
+* Adjustable brain and tumor phantom, with a 48-crystal ring by default.
+* Animated acquisition of true, scattered, and random coincidences.
+* FBP (ramp or Hann) and MLEM, with a convergence plot.
+* Localization error, tumor-to-background ratio, contrast, background variability, and scale-normalized RMSE.
+* Optional energy resolution, timing window, random insertion, and a single-scatter cartoon.
+* Repeated image-quality trials versus coincidence count.
+* Random-coincidence subtraction and a global scatter-count scale. The scatter step is not a spatial correction.
+
+## Screenshots
+
+These captures are from the Qt offscreen build used during development. They are not macOS screenshots. A Mac capture after an acquisition and an FBP reconstruction is still worth adding.
+
+![Workstation](docs/screenshots/workstation.png)
+
+![Corrections](docs/screenshots/corrections.png)
+
+## Stage 10 overview
+
+Navigation is only the header. The old second row of tabs is gone. Simulation settings sit in collapsible groups, and each slider has a numeric field with the same range. Live annihilations and coincidences are metric cards. The detector panel names the crystal count from the ring model, keeps the event colors, and can fit or export the view. Plots share one dark axis style. Tables right-align numbers. Scatter scaling is still described as one fraction on the prompt sinogram.
 
 ## Stage 9 overview
 

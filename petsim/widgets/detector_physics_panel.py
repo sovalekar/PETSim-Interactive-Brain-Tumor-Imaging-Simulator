@@ -27,16 +27,11 @@ from petsim.physics.detector_effects import DetectorPhysicsConfig
 from petsim.widgets.chrome import section_row
 from petsim.reconstruction.pipeline import ReconstructionResult
 from petsim.theme import COLORS
+from petsim.widgets.chrome import style_axes as _shared_axes
 
 
 def _style_axes(ax) -> None:
-    ax.set_facecolor(COLORS["panel"])
-    ax.tick_params(colors=COLORS["text_muted"], labelsize=8)
-    ax.xaxis.label.set_color(COLORS["text"])
-    ax.yaxis.label.set_color(COLORS["text"])
-    ax.title.set_color(COLORS["text"])
-    for spine in ax.spines.values():
-        spine.set_color(COLORS["border"])
+    _shared_axes(ax, grid=True)
 
 
 class EnergySpectrumCanvas(FigureCanvasQTAgg):
