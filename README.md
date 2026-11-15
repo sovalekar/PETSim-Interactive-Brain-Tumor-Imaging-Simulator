@@ -17,7 +17,30 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **4** | Done | Tumor localization, TBR / contrast / background CV, coincidence-count comparison |
 | **5** | Done | MLEM iterative reconstruction, convergence, and FBP comparison |
 | **6** | Done | Repeated image-quality experiments versus coincidence count |
-| **7** | **This release (v0.7.0)** | Energy resolution, timing window, randoms, and simplified Compton scatter |
+| **7** | Done | Energy resolution, timing window, randoms, and simplified Compton scatter |
+| **8** | **This release (v0.8.0)** | Estimated random and scatter corrections, matched validation |
+
+---
+
+## Stage 8 overview
+
+The **PET Corrections & Validation** tab compares five reconstructions of one acquisition: ideal, degraded and uncorrected, random-corrected, scatter-corrected, and both corrections. FBP and MLEM both receive the corrected prompt sinogram. Prompts are clipped at zero before either algorithm. The original uncorrected image is kept in the comparison.
+
+Random correction subtracts
+
+\[
+\mu_R = \rho N_{\text{annihilations}}
+\]
+
+spread over every unordered crystal pair. \(\rho\) is the random probability the acquisition was configured with. The estimator does not look at which events were random. If detector effects were off, \(\rho\) is treated as zero.
+
+Scatter correction, after that subtraction when both are enabled, smooths the nonnegative residual and scales it so the bins with \(|s| \ge 0.78\) match. That tail cut is scanner geometry, not the phantom radius. It is not a clinical scatter correction. Scatter-only mode can mistake flat randoms for scatter.
+
+Metrics may use the phantom after reconstruction. RMSE is computed after a nonnegative least-squares scale \(\alpha\) that aligns the clipped reconstruction with the phantom raster. NRMSE divides that RMSE by the RMS of the activity map. CRC is measured contrast divided by the contrast of the same ROIs on the phantom raster. None of these are calibrated SUV or Bq/mL errors. A correction is not claimed to improve every score.
+
+The matched study simulates each prompt list once, then reconstructs every selected mode from that list. The original Image Quality Experiments tab is unchanged.
+
+Stage 7 timing acceptance is still only an accept/reject cut. There is no time-of-flight reconstruction.
 
 ---
 
