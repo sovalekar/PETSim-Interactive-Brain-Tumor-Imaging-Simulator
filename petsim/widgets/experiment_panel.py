@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QHeaderView,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -31,6 +32,7 @@ from petsim.experiments.export import export_experiment
 from petsim.experiments.runner import ExperimentResult
 from petsim.models.phantom import PhantomState
 from petsim.theme import COLORS
+from petsim.widgets.chrome import section_row
 
 _METHOD_COLORS = {"fbp": COLORS["detector"], "mlem": COLORS["accent"]}
 
@@ -175,6 +177,7 @@ class ExperimentPanel(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
+        layout.addWidget(section_row("Experiment setup", "parameter"))
         setup = QGroupBox("Experiment setup")
         form = QGridLayout(setup)
         self._fbp = QCheckBox("FBP")
@@ -200,23 +203,27 @@ class ExperimentPanel(QWidget):
 
         self._trials = QSpinBox()
         self._trials.setRange(1, 30)
+        self._trials.setToolTip("Independent acquisitions at each coincidence count. Error bars use their standard deviation.")
         self._trials.setValue(3)
         form.addWidget(QLabel("Trials per count"), 2, 0)
         form.addWidget(self._trials, 2, 1)
 
         self._seed = QSpinBox()
         self._seed.setRange(0, 2_000_000_000)
+        self._seed.setToolTip("Starting seed. Each trial advances from this value so repeats stay reproducible.")
         self._seed.setValue(1)
         form.addWidget(QLabel("Random seed"), 3, 0)
         form.addWidget(self._seed, 3, 1)
 
         self._iterations = QComboBox()
         self._iterations.addItems(["1", "5", "10", "20", "50"])
+        self._iterations.setToolTip("MLEM iterations used for every MLEM trial in this experiment.")
         self._iterations.setCurrentText("10")
         form.addWidget(QLabel("MLEM iterations"), 4, 0)
         form.addWidget(self._iterations, 4, 1)
 
         self._filter = QComboBox()
+        self._filter.setToolTip("FBP filter for every FBP trial. Hann is smoother. Ramp keeps higher spatial frequencies.")
         self._filter.addItems(["Hann", "Ramp"])
         form.addWidget(QLabel("FBP filter"), 5, 0)
         form.addWidget(self._filter, 5, 1)
@@ -224,6 +231,7 @@ class ExperimentPanel(QWidget):
         self._efficiency = QDoubleSpinBox()
         self._efficiency.setRange(0.20, 1.0)
         self._efficiency.setSingleStep(0.05)
+        self._efficiency.setToolTip("Per-detector efficiency for the simulated acquisitions in this study.")
         self._efficiency.setValue(0.80)
         form.addWidget(QLabel("Detector efficiency"), 6, 0)
         form.addWidget(self._efficiency, 6, 1)
@@ -248,6 +256,8 @@ class ExperimentPanel(QWidget):
         self._start.setObjectName("PrimaryButton")
         self._start.clicked.connect(self._on_start)
         self._cancel = QPushButton("Cancel")
+        self._cancel.setObjectName("DangerButton")
+        self._cancel.setToolTip("Stop after the current trial. Finished rows stay in the table.")
         self._cancel.setEnabled(False)
         self._cancel.clicked.connect(self.cancel_requested.emit)
         self._reset = QPushButton("Reset Results")
@@ -285,6 +295,14 @@ class ExperimentPanel(QWidget):
             ]
         )
         self._table.setMinimumHeight(140)
+        self._table.setAlternatingRowColors(True)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setToolTip(
+            "Measured educational scores from the reconstructed images. "
+            "Localization error compares an estimated peak with the known tumor center."
+        )
+        layout.addWidget(section_row("Trial scores", "measured"))
         layout.addWidget(self._table)
 
         grid = QGridLayout()

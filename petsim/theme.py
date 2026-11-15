@@ -1,4 +1,4 @@
-"""Dark clinical workstation theme for PETSim."""
+"""Dark scientific-workstation theme for PETSim."""
 
 from __future__ import annotations
 
@@ -22,6 +22,9 @@ COLORS = {
     "detector_active": "#79c0ff",
     "fov": "#30363d",
     "grid": "#21262d",
+    "info": "#79c0ff",
+    "estimated": "#e3b341",
+    "truth": "#d2a8ff",
 }
 
 DARK_STYLESHEET = f"""
@@ -225,8 +228,156 @@ QProgressBar::chunk {{
 
 QHeaderView::section {{
     background: {COLORS["panel_alt"]};
-    color: {COLORS["text_muted"]};
+    color: {COLORS["text"]};
+    border: none;
+    border-bottom: 1px solid {COLORS["border"]};
+    border-right: 1px solid {COLORS["border"]};
+    padding: 6px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+QMenuBar {{
+    background: {COLORS["panel"]};
+    border-bottom: 1px solid {COLORS["border"]};
+    spacing: 4px;
+}}
+
+QMenuBar::item:selected {{
+    background: {COLORS["panel_alt"]};
+}}
+
+QMenu {{
+    background: {COLORS["panel"]};
     border: 1px solid {COLORS["border"]};
-    padding: 4px;
+}}
+
+QMenu::item:selected {{
+    background: {COLORS["accent_dim"]};
+}}
+
+QLineEdit, QSpinBox, QDoubleSpinBox {{
+    background: {COLORS["panel"]};
+    border: 1px solid {COLORS["border"]};
+    border-radius: 4px;
+    padding: 4px 6px;
+    min-height: 22px;
+}}
+
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
+    border-color: {COLORS["info"]};
+}}
+
+QTableWidget {{
+    background: {COLORS["panel"]};
+    alternate-background-color: {COLORS["panel_alt"]};
+    gridline-color: {COLORS["border"]};
+    selection-background-color: {COLORS["accent_dim"]};
+    selection-color: {COLORS["text"]};
+}}
+
+QTableWidget::item {{
+    padding: 4px 6px;
+}}
+
+QToolTip {{
+    background: {COLORS["panel_alt"]};
+    color: {COLORS["text"]};
+    border: 1px solid {COLORS["border"]};
+    padding: 6px;
+}}
+
+QWidget#AppBar {{
+    background: {COLORS["panel"]};
+    border: 1px solid {COLORS["border"]};
+    border-radius: 8px;
+}}
+
+QLabel#AppTitle {{
+    font-size: 16px;
+    font-weight: 650;
+    background: transparent;
+}}
+
+QLabel#AppSubtitle {{
+    color: {COLORS["text_muted"]};
+    font-size: 12px;
+    background: transparent;
+}}
+
+QPushButton#StepButton {{
+    background: transparent;
+    border: 1px solid transparent;
+    color: {COLORS["text_muted"]};
+    padding: 4px 10px;
+    font-weight: 600;
+}}
+
+QPushButton#StepButton:hover {{
+    border-color: {COLORS["border"]};
+    color: {COLORS["text"]};
+}}
+
+QPushButton#StepButton:checked {{
+    background: {COLORS["panel_alt"]};
+    border-color: {COLORS["info"]};
+    color: {COLORS["text"]};
+}}
+
+QPushButton#DangerButton {{
+    border-color: {COLORS["danger"]};
+    color: {COLORS["danger"]};
+}}
+
+QPushButton#DangerButton:hover {{
+    background: {COLORS["danger"]};
+    color: {COLORS["bg"]};
+}}
+
+QLabel#KindParameter, QLabel#KindMeasured, QLabel#KindEstimated, QLabel#KindTruth {{
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 8px;
+    background: {COLORS["panel"]};
+}}
+
+QLabel#KindParameter {{
+    color: {COLORS["info"]};
+    border: 1px solid {COLORS["info"]};
+}}
+
+QLabel#KindMeasured {{
+    color: {COLORS["accent"]};
+    border: 1px solid {COLORS["accent"]};
+}}
+
+QLabel#KindEstimated {{
+    color: {COLORS["estimated"]};
+    border: 1px solid {COLORS["estimated"]};
+}}
+
+QLabel#KindTruth {{
+    color: {COLORS["truth"]};
+    border: 1px solid {COLORS["truth"]};
+}}
+
+QTabBar::tab {{
+    padding: 8px 16px;
+    min-height: 18px;
+}}
+
+QTabBar::tab:selected {{
+    border-bottom: 2px solid {COLORS["info"]};
+    color: {COLORS["text"]};
+}}
+
+QProgressBar {{
+    min-height: 18px;
+    font-size: 11px;
+}}
+
+QSplitter::handle:hover {{
+    background-color: {COLORS["info"]};
 }}
 """

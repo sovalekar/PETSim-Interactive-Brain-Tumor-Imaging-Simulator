@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from petsim.physics.acquisition import AcquisitionStats
 from petsim.physics.detector_effects import DetectorPhysicsConfig
+from petsim.widgets.chrome import section_row
 from petsim.reconstruction.pipeline import ReconstructionResult
 from petsim.theme import COLORS
 
@@ -226,18 +227,24 @@ class DetectorPhysicsPanel(QWidget):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
+        layout.addWidget(section_row("Model settings", "parameter"))
         self._enabled = QCheckBox("Enable detector effects")
         self._enabled.setChecked(False)
+        self._enabled.setToolTip(
+            "Off keeps the ideal coincidence model. On applies energy, timing, randoms, and the Compton cartoon."
+        )
         layout.addWidget(self._enabled)
 
         form = QFormLayout()
         self._energy_fwhm = QSlider(Qt.Orientation.Horizontal)
         self._energy_fwhm.setRange(0, 30)
+        self._energy_fwhm.setToolTip("Gaussian blur of photon energy, as a percent of 511 keV. A parameter, not a measurement.")
         self._energy_fwhm.setValue(12)
         self._energy_fwhm_val = QLabel("12%")
         form.addRow("Energy resolution FWHM", _slider_row(self._energy_fwhm, self._energy_fwhm_val))
         self._window_low = QSpinBox()
         self._window_low.setRange(100, 511)
+        self._window_low.setToolTip("Lower edge of the photopeak window. Photons below this are rejected.")
         self._window_low.setValue(435)
         self._window_low.setSuffix(" keV")
         form.addRow("Energy window low", self._window_low)
@@ -254,16 +261,23 @@ class DetectorPhysicsPanel(QWidget):
         self._timing_window = QSpinBox()
         self._timing_window.setRange(1, 20000)
         self._timing_window.setSingleStep(100)
+        self._timing_window.setToolTip(
+            "Accept a coincidence when the measured arrival-time difference is inside this window. Not time-of-flight reconstruction."
+        )
         self._timing_window.setValue(4000)
         self._timing_window.setSuffix(" ps")
         form.addRow("Timing window |Δt_measured|", self._timing_window)
         self._random = QSlider(Qt.Orientation.Horizontal)
         self._random.setRange(0, 100)
+        self._random.setToolTip("Probability that an annihilation also inserts one uniform random coincidence.")
         self._random.setValue(0)
         self._random_val = QLabel("0%")
         form.addRow("Random coincidence chance", _slider_row(self._random, self._random_val))
         self._scatter = QSlider(Qt.Orientation.Horizontal)
         self._scatter.setRange(0, 100)
+        self._scatter.setToolTip(
+            "Per-photon chance of one in-plane Compton deflection. This is a cartoon, not a patient scatter simulation."
+        )
         self._scatter.setValue(0)
         self._scatter_val = QLabel("0%")
         form.addRow("Scatter probability / photon", _slider_row(self._scatter, self._scatter_val))
@@ -274,6 +288,7 @@ class DetectorPhysicsPanel(QWidget):
             "Annihilations 0 · singles 0 · undetected 0 · accepted 0"
         )
         self._live_rejected = QLabel("Energy rejected 0 · timing rejected 0 (not double-counted)")
+        layout.addWidget(section_row("Live accounting", "measured"))
         for label in (self._live_mode, self._live_accounting, self._live_rejected):
             label.setObjectName("HintLabel")
             label.setWordWrap(True)
@@ -315,6 +330,8 @@ class DetectorPhysicsPanel(QWidget):
         self._compare_btn = QPushButton("Reconstruct ideal vs degraded")
         self._compare_btn.setObjectName("PrimaryButton")
         self._cancel_compare_btn = QPushButton("Cancel comparison")
+        self._cancel_compare_btn.setObjectName("DangerButton")
+        self._cancel_compare_btn.setToolTip("Stop the ideal-versus-degraded reconstruction. The workstation image is left unchanged.")
         self._cancel_compare_btn.setEnabled(False)
         controls.addWidget(QLabel("Algorithm"))
         controls.addWidget(self._method)
