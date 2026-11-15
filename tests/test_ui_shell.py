@@ -53,6 +53,10 @@ def test_single_header_navigation_and_scatter_wording(qapp):
         qapp.processEvents()
         assert sidebar.horizontalScrollBar().maximum() == 0
         assert window.splitter.count() == 3
+        for scroll in window.reconstruction.findChildren(QScrollArea):
+            assert scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert window.reconstruction._convergence.isHidden()
+    assert not isinstance(window.reconstruction.convergence_canvas.parent(), QScrollArea)
     assert set(KIND_HELP) == {"parameter", "measured", "estimated", "truth"}
     assert "Parameter" in _chip_texts(window.controls)
     assert "Measured" in _chip_texts(window.controls)
