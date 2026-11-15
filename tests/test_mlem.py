@@ -202,10 +202,14 @@ def test_gui_method_switch_and_independent_canvases(qapp):
     # isHidden follows setVisible even when the parent window is not shown.
     assert not panel._filter_row.isHidden()
     assert panel._iter_row.isHidden()
+    assert panel._convergence.isHidden()
     assert panel.current_config().method == "fbp"
     panel._method.setCurrentIndex(1)
     assert not panel._iter_row.isHidden()
     assert panel._filter_row.isHidden()
+    assert not panel._convergence.isHidden()
+    assert panel.convergence_canvas.isHidden()
+    assert not panel._convergence_empty.isHidden()
     assert panel.current_config().method == "mlem"
     assert panel.current_config().n_iterations == 10
     assert panel._iterations.currentText() == "10"
@@ -231,6 +235,7 @@ def test_gui_method_switch_and_independent_canvases(qapp):
     recon_title = panel.canvas.figure.axes[0].get_title()
     count_title = panel.count_canvas.figure.axes[0].get_title()
     panel.show_mlem_progress(1, 10, -12.0, 0.4)
+    assert not panel.convergence_canvas.isHidden()
     assert panel.canvas.figure.axes[0].get_title() == recon_title
     assert panel.count_canvas.figure.axes[0].get_title() == count_title
     assert "convergence" in panel.convergence_canvas.figure.axes[0].get_title().lower()

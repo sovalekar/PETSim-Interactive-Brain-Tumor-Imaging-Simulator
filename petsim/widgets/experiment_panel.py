@@ -32,7 +32,7 @@ from petsim.experiments.export import export_experiment
 from petsim.experiments.runner import ExperimentResult
 from petsim.models.phantom import PhantomState
 from petsim.theme import COLORS
-from petsim.widgets.chrome import section_row
+from petsim.widgets.chrome import numeric_item, section_row, style_axes
 
 _METHOD_COLORS = {"fbp": COLORS["detector"], "mlem": COLORS["accent"]}
 
@@ -57,13 +57,7 @@ class MetricPlot(FigureCanvasQTAgg):
         self.show_placeholder("Run an experiment to plot this metric.")
 
     def _style(self, ax) -> None:
-        ax.set_facecolor(COLORS["bg"])
-        ax.tick_params(colors=COLORS["text_muted"], labelsize=7)
-        for spine in ax.spines.values():
-            spine.set_color(COLORS["border"])
-        ax.title.set_color(COLORS["text"])
-        ax.xaxis.label.set_color(COLORS["text_muted"])
-        ax.yaxis.label.set_color(COLORS["text_muted"])
+        style_axes(ax, grid=True)
 
     def show_placeholder(self, message: str) -> None:
         self._figure.clear()
@@ -410,8 +404,7 @@ class ExperimentPanel(QWidget):
                 _fmt_pm(row.runtime_s_mean, row.runtime_s_std),
             ]
             for column, text in enumerate(values):
-                item = QTableWidgetItem(text)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                item = QTableWidgetItem(text) if column == 1 else numeric_item(text)
                 self._table.setItem(row_index, column, item)
         self._table.resizeColumnsToContents()
 

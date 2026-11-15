@@ -8,7 +8,16 @@ from collections import deque
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Arc, Circle, Ellipse
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from petsim.models.detector import DetectorRing
 from petsim.models.phantom import BrainPhantom, PhantomState
@@ -152,7 +161,7 @@ class DetectorCanvas(FigureCanvasQTAgg):
                     theta1=_degrees(t0),
                     theta2=_degrees(t1),
                     color=COLORS["detector"],
-                    linewidth=3.5,
+                    linewidth=4.2,
                     zorder=6,
                 )
                 ax.add_patch(arc)
@@ -176,22 +185,17 @@ class DetectorCanvas(FigureCanvasQTAgg):
                         zorder=8,
                     )
 
-        ax.set_xlim(-1.25, 1.25)
-        ax.set_ylim(-1.25, 1.25)
+        limit = 1.30 if self._show_labels else 1.12
+        ax.set_xlim(-limit, limit)
+        ax.set_ylim(-limit, limit)
         ax.set_aspect("equal")
         ax.set_xticks([])
         ax.set_yticks([])
         for spine in ax.spines.values():
             spine.set_visible(False)
 
-        ax.set_title(
-            f"Detector ring · {self._ring.n_detectors} crystals · Stage 2 acquisition",
-            color=COLORS["text_muted"],
-            fontsize=10,
-            pad=8,
-        )
-
-        self._figure.tight_layout(pad=0.6)
+        ax.set_title("")
+        self._figure.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
         self._base_drawn = True
         self.draw_idle()
 
@@ -219,8 +223,8 @@ class DetectorCanvas(FigureCanvasQTAgg):
         illuminate: dict[int, str] = {}
         for ev in self._recent_events:
             if ev.is_coincidence:
-                illuminate[ev.detector_a] = COLORS["accent"]
-                illuminate[ev.detector_b] = COLORS["accent"]
+                illuminate[ev.detector_a] = COLORS["success"]
+                illuminate[ev.detector_b] = COLORS["success"]
             else:
                 # Partial / missed detections use a warmer warn color.
                 if ev.detected_a:
@@ -240,7 +244,7 @@ class DetectorCanvas(FigureCanvasQTAgg):
             is_newest = i >= len(self._recent_events) - 3
             alpha = 0.95 if is_newest else 0.35
             if ev.is_coincidence:
-                color = COLORS["accent"]
+                color = COLORS["success"]
                 lw = 1.6 if is_newest else 1.0
             else:
                 color = COLORS["danger"]
@@ -343,31 +347,67 @@ class DetectorCanvas(FigureCanvasQTAgg):
 
         self.draw_idle()
 
+    def fit_view(self) -> None:
+        """Restore the square field of view around the detector ring."""
+        limit = 1.30 if self._show_labels else 1.12
+        self._ax.set_xlim(-limit, limit)
+        self._ax.set_ylim(-limit, limit)
+        self._ax.set_aspect("equal")
+        self.draw_idle()
+
 
 class DetectorView(QFrame):
     """Panel wrapper around the detector Matplotlib canvas."""
+
+    labels_toggled = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Panel")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(4)
 
-        title = QLabel("Acquisition Geometry")
+        title = QLabel("PET Detector Geometry")
         title.setObjectName("PanelTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel(
-            "48-element circular detector ring. Green rays = unscattered coincidences; "
-            "amber chords = scatter; blue chords = random pairs; red = missed photons."
-        )
+        self.canvas = DetectorCanvas(self)
+        crystal_count = self.canvas._ring.n_detectors
+        subtitle = QLabel(f"{crystal_count}-crystal circular detector array")
         subtitle.setObjectName("HintLabel")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
-        self.canvas = DetectorCanvas(self)
+        legend = QHBoxLayout()
+        for name, color in (
+            ("Unscattered", COLORS["success"]),
+            ("Scatter", COLORS["warn"]),
+            ("Random", COLORS["detector"]),
+            ("Missed", COLORS["danger"]),
+        ):
+            swatch = QLabel(name)
+            swatch.setStyleSheet(f"color: {color}; background: transparent; font-size: 11px;")
+            swatch.setToolTip(f"{name} events use this color on the ring.")
+            legend.addWidget(swatch)
+        legend.addStretch(1)
+        layout.addLayout(legend)
+
+        tools = QHBoxLayout()
+        fit = QPushButton("Fit view")
+        fit.setToolTip("Center the detector ring in the viewport.")
+        fit.clicked.connect(self.canvas.fit_view)
+        labels = QPushButton("Labels")
+        labels.setToolTip("Show or hide every 8th crystal index. This uses the same setting as the control sidebar.")
+        labels.clicked.connect(self.labels_toggled.emit)
+        export = QPushButton("Export image")
+        export.setToolTip("Save the current detector view as a PNG.")
+        export.clicked.connect(self._export_image)
+        for button in (fit, labels, export):
+            tools.addWidget(button)
+        tools.addStretch(1)
+        layout.addLayout(tools)
         layout.addWidget(self.canvas, stretch=1)
 
     def update_view(
@@ -390,3 +430,14 @@ class DetectorView(QFrame):
 
     def clear_events(self) -> None:
         self.canvas.clear_events()
+
+    def _export_image(self) -> None:
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            "Export detector view",
+            "petsim-detector.png",
+            "PNG image (*.png)",
+        )
+        if not path:
+            return
+        self.canvas.figure.savefig(path, dpi=140, facecolor=self.canvas.figure.get_facecolor())

@@ -6,7 +6,7 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -28,7 +28,7 @@ from petsim.analysis.pipeline import QuantitativeAnalysisResult
 from petsim.analysis.roi import ROIMasks
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
 from petsim.theme import COLORS
-from petsim.widgets.chrome import kind_chip
+from petsim.widgets.chrome import CollapsibleSection, kind_chip, style_axes
 
 
 def _fmt_xy(xy: tuple[float, float] | None) -> str:
@@ -92,23 +92,44 @@ def _format_algorithm_table(
     return "\n".join(lines)
 
 
+class _ScoresScroll(QScrollArea):
+    """Scores stay reachable without wrapping the reconstruction image or convergence chart."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+    def sizeHint(self) -> QSize:
+        return QSize(240, 220)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 0)
+
+
 class ReconstructionCanvas(FigureCanvasQTAgg):
     """Embedded Matplotlib canvas for recon / sinogram / comparison views."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        self._figure = Figure(figsize=(4.2, 4.2), dpi=100, facecolor=COLORS["panel"])
+        self._figure = Figure(figsize=(3.6, 2.8), dpi=100, facecolor=COLORS["panel"])
         super().__init__(self._figure)
         self.setParent(parent)
-        self._show_placeholder("Run acquisition, then click Run Reconstruction.")
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding
+        )
+        self.setMinimumHeight(48)
+        self._show_placeholder("No reconstruction yet\n\nAcquire coincidences, then run FBP or MLEM.")
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(160, 48)
+
+    def sizeHint(self) -> QSize:
+        return QSize(360, 200)
 
     def _style_axis(self, ax) -> None:
-        ax.set_facecolor(COLORS["bg"])
-        ax.tick_params(colors=COLORS["text_muted"], labelsize=8)
-        for spine in ax.spines.values():
-            spine.set_color(COLORS["border"])
-        ax.title.set_color(COLORS["text"])
-        ax.xaxis.label.set_color(COLORS["text_muted"])
-        ax.yaxis.label.set_color(COLORS["text_muted"])
+        style_axes(ax)
 
     def _show_placeholder(self, message: str) -> None:
         self._figure.clear()
@@ -454,13 +475,7 @@ class CountComparisonCanvas(FigureCanvasQTAgg):
         )
 
     def _style_axis(self, ax) -> None:
-        ax.set_facecolor(COLORS["bg"])
-        ax.tick_params(colors=COLORS["text_muted"], labelsize=8)
-        for spine in ax.spines.values():
-            spine.set_color(COLORS["border"])
-        ax.title.set_color(COLORS["text"])
-        ax.xaxis.label.set_color(COLORS["text_muted"])
-        ax.yaxis.label.set_color(COLORS["text_muted"])
+        style_axes(ax)
 
     def show_placeholder(self, message: str) -> None:
         self._figure.clear()
@@ -532,19 +547,43 @@ class ConvergenceCanvas(FigureCanvasQTAgg):
     """MLEM Poisson log-likelihood and relative change. Own figure."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        self._figure = Figure(figsize=(4.2, 2.3), dpi=100, facecolor=COLORS["panel"])
+        self._figure = Figure(figsize=(4.2, 2.1), dpi=100, facecolor=COLORS["panel_alt"])
         super().__init__(self._figure)
         self.setParent(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMinimumHeight(88)
         self.show_placeholder("Run MLEM to plot likelihood and relative change.")
 
+    def minimumSizeHint(self) -> QSize:
+        return QSize(160, 88)
+
+    def sizeHint(self) -> QSize:
+        return QSize(360, 168)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_figure()
+
+    def _fit_figure(self) -> None:
+        if not self._figure.axes:
+            return
+        short = self.height() < 110
+        ax = self._figure.axes[0]
+        ax.title.set_visible(not short)
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.set_visible(not short)
+        if short:
+            self._figure.subplots_adjust(left=0.17, right=0.74, bottom=0.40, top=0.96)
+        else:
+            self._figure.subplots_adjust(left=0.12, right=0.88, bottom=0.18, top=0.86)
+        self.draw_idle()
+
     def _style_axis(self, ax) -> None:
-        ax.set_facecolor(COLORS["bg"])
-        ax.tick_params(colors=COLORS["text_muted"], labelsize=7)
-        for spine in ax.spines.values():
-            spine.set_color(COLORS["border"])
-        ax.title.set_color(COLORS["text"])
+        style_axes(ax, grid=True)
         ax.xaxis.label.set_color(COLORS["text_muted"])
         ax.yaxis.label.set_color(COLORS["text_muted"])
+        self._figure.set_facecolor(COLORS["panel_alt"])
 
     def show_placeholder(self, message: str) -> None:
         self._figure.clear()
@@ -558,8 +597,7 @@ class ConvergenceCanvas(FigureCanvasQTAgg):
             ha="center", va="center", color=COLORS["text_muted"],
             fontsize=9, wrap=True, transform=ax.transAxes,
         )
-        self._figure.tight_layout(pad=0.45)
-        self.draw_idle()
+        self._fit_figure()
 
     def show_history(self, history) -> None:
         self._figure.clear()
@@ -571,19 +609,49 @@ class ConvergenceCanvas(FigureCanvasQTAgg):
         rel = np.asarray(history.relative_change, dtype=np.float64)
         ax1 = self._figure.add_subplot(111)
         self._style_axis(ax1)
+        likelihood = None
         finite = np.isfinite(ll)
         if np.any(finite):
-            ax1.plot(iters[finite], ll[finite], "o-", color=COLORS["detector"], markersize=4)
-        ax1.set_xlabel("Iteration")
-        ax1.set_ylabel("Poisson log L (unnormalized)")
-        ax1.set_title("MLEM convergence", fontsize=10)
+            (likelihood,) = ax1.plot(
+                iters[finite],
+                ll[finite],
+                "-o",
+                color=COLORS["accent"],
+                markersize=4,
+                linewidth=1.6,
+                label="Log-likelihood",
+            )
+        ax1.set_xlabel("Iteration", fontsize=8, labelpad=2)
+        ax1.set_ylabel("Log L", color=COLORS["accent"], fontsize=8, labelpad=2)
+        ax1.tick_params(axis="y", colors=COLORS["accent"], labelsize=7)
+        ax1.tick_params(axis="x", labelsize=7)
+        ax1.set_title("MLEM convergence", fontsize=9, pad=2)
         ax2 = ax1.twinx()
-        ax2.plot(iters, rel, "s--", color=COLORS["warn"], markersize=3.5)
-        ax2.set_ylabel("Relative image change", color=COLORS["warn"])
+        ax2.set_facecolor("none")
+        (change,) = ax2.plot(
+            iters,
+            rel,
+            "--s",
+            color=COLORS["warn"],
+            markersize=3.5,
+            linewidth=1.2,
+            label="Relative change",
+        )
+        ax2.set_ylabel("Change", color=COLORS["warn"], fontsize=8, labelpad=2)
         ax2.tick_params(colors=COLORS["warn"], labelsize=7)
         ax2.spines["right"].set_color(COLORS["warn"])
-        self._figure.tight_layout(pad=0.5)
-        self.draw_idle()
+        ax2.grid(False)
+        series = [artist for artist in (likelihood, change) if artist is not None]
+        legend = ax1.legend(
+            series,
+            [artist.get_label() for artist in series],
+            loc="best",
+            frameon=False,
+            fontsize=8,
+        )
+        for text in legend.get_texts():
+            text.set_color(COLORS["text_muted"])
+        self._fit_figure()
 
 
 class ReconstructionPanel(QFrame):
@@ -621,26 +689,14 @@ class ReconstructionPanel(QFrame):
 
         title = QLabel("Reconstruction")
         title.setObjectName("PanelTitle")
+        title.setToolTip(
+            "FBP or MLEM from the measured coincidences. Purple values are the known "
+            "phantom, amber values are estimates, and green values are measurements. "
+            "The Guide explains each score."
+        )
         root.addWidget(title)
 
-        subtitle = QLabel(
-            "FBP or MLEM from the measured coincidences. Purple values are the "
-            "known phantom. Amber values are estimates. Green values are image measurements."
-        )
-        subtitle.setObjectName("HintLabel")
-        subtitle.setWordWrap(True)
-        root.addWidget(subtitle)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        body = QWidget()
-        layout = QVBoxLayout(body)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        scroll.setWidget(body)
-        root.addWidget(scroll, stretch=1)
+        layout = root
 
         # --- Controls ---
         row = QHBoxLayout()
@@ -686,18 +742,24 @@ class ReconstructionPanel(QFrame):
         layout.addWidget(self._filter_row)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("Display"))
+        row.setSpacing(6)
+        display_label = QLabel("Display")
+        row.addWidget(display_label)
         self._display = QComboBox()
+        self._display.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._display.setMinimumContentsLength(8)
         self._display.addItems(
             ["Reconstructed Image", "Sinogram", "Comparison", "FBP vs MLEM"]
         )
         self._display.currentTextChanged.connect(self._refresh_canvas)
-        row.addWidget(self._display, stretch=1)
-        layout.addLayout(row)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Colormap"))
+        row.addWidget(self._display, stretch=2)
+        map_label = QLabel("Map")
+        map_label.setToolTip("Color map for the image display. This does not change the data.")
+        row.addWidget(map_label)
         self._cmap = QComboBox()
+        self._cmap.setToolTip("Color map for the image display. This does not change the data.")
         self._cmap.addItems(["hot", "inferno", "magma", "viridis", "gray"])
         self._cmap.currentTextChanged.connect(self._refresh_canvas)
         row.addWidget(self._cmap, stretch=1)
@@ -714,55 +776,85 @@ class ReconstructionPanel(QFrame):
         layout.addWidget(self._shared_scale)
 
         self.canvas = ReconstructionCanvas(self)
-        self.canvas.setMinimumHeight(280)
-        self.canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        layout.addWidget(self.canvas)
+        layout.addWidget(self.canvas, stretch=3)
 
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
         self._status = QLabel("Recorded coincidences: 0")
         self._status.setObjectName("HintLabel")
         self._status.setWordWrap(True)
-        layout.addWidget(self._status)
+        status_row.addWidget(self._status, stretch=1)
 
         self._recon_progress = QProgressBar()
         self._recon_progress.setRange(0, 100)
         self._recon_progress.setValue(0)
         self._recon_progress.setFormat("Idle")
+        self._recon_progress.setFixedWidth(108)
         self._recon_progress.setToolTip("MLEM iteration progress. FBP finishes in one step, so this stays idle.")
-        layout.addWidget(self._recon_progress)
+        status_row.addWidget(self._recon_progress)
+        layout.addLayout(status_row)
 
-        self._run_btn = QPushButton("Run Reconstruction")
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        self._run_btn = QPushButton("Run")
         self._run_btn.setObjectName("PrimaryButton")
         self._run_btn.setEnabled(False)
+        self._run_btn.setToolTip("Reconstruct the current sinogram with the selected method.")
         self._run_btn.clicked.connect(self._on_run)
-        layout.addWidget(self._run_btn)
+        actions.addWidget(self._run_btn, stretch=1)
 
-        self._compare_algs_btn = QPushButton("Compare FBP and MLEM")
+        self._compare_algs_btn = QPushButton("Compare")
         self._compare_algs_btn.setEnabled(False)
+        self._compare_algs_btn.setToolTip("Run FBP and MLEM on the same corrected sinogram and show both images.")
         self._compare_algs_btn.clicked.connect(self._on_compare_algorithms)
-        layout.addWidget(self._compare_algs_btn)
+        actions.addWidget(self._compare_algs_btn, stretch=1)
 
-        self._cancel_btn = QPushButton("Cancel Reconstruction")
+        self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setObjectName("DangerButton")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setToolTip("Stop the reconstruction thread. A partial MLEM image is not kept.")
         self._cancel_btn.clicked.connect(self.cancel_requested.emit)
-        layout.addWidget(self._cancel_btn)
+        actions.addWidget(self._cancel_btn, stretch=1)
+        layout.addLayout(actions)
 
-        conv_box = QGroupBox("MLEM Convergence")
-        conv_layout = QVBoxLayout(conv_box)
-        conv_note = QLabel(
-            "Poisson log-likelihood Σ (y log ŷ − ŷ), constant log(y!) omitted. "
-            "Relative change is ‖xⁿ − xⁿ⁻¹‖ / ‖xⁿ⁻¹‖."
+        self._convergence_has_data = False
+        self._convergence = CollapsibleSection("MLEM convergence", expanded=True)
+        self._convergence._toggle.setToolTip(
+            "Poisson log-likelihood Σ (y log ŷ − ŷ), omitting log(y!). "
+            "Relative change is ‖xⁿ − xⁿ⁻¹‖ / ‖xⁿ⁻¹‖. FBP has no iteration curve."
         )
-        conv_note.setObjectName("HintLabel")
-        conv_note.setWordWrap(True)
-        conv_layout.addWidget(conv_note)
+        card = QFrame()
+        card.setObjectName("MetricCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(6, 4, 6, 4)
+        card_layout.setSpacing(0)
+        self._convergence_empty = QLabel(
+            "Run MLEM to plot likelihood and relative change."
+        )
+        self._convergence_empty.setObjectName("HintLabel")
+        self._convergence_empty.setWordWrap(True)
         self.convergence_canvas = ConvergenceCanvas(self)
-        self.convergence_canvas.setMinimumHeight(180)
-        conv_layout.addWidget(self.convergence_canvas)
-        layout.addWidget(conv_box)
+        card_layout.addWidget(self._convergence_empty)
+        card_layout.addWidget(self.convergence_canvas, stretch=1)
+        self._convergence.content.addWidget(card, stretch=1)
+        self._convergence.layout().setStretchFactor(self._convergence.body, 1)
+        self._convergence._toggle.toggled.connect(self._sync_convergence)
+        root.addWidget(self._convergence)
+
+        self._scores = CollapsibleSection("Scores and counts", expanded=False)
+        self._scores._toggle.setToolTip(
+            "Localization, contrast, noise, and the coincidence-count comparison."
+        )
+        scores_scroll = _ScoresScroll()
+        scores_body = QWidget()
+        scores_body.setMinimumWidth(0)
+        layout = QVBoxLayout(scores_body)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        scores_scroll.setWidget(scores_body)
+        self._scores.content.addWidget(scores_scroll)
+        root.addWidget(self._scores)
+        self._sync_convergence()
 
         self._clear_btn = QPushButton("Clear Output")
         self._clear_btn.setEnabled(False)
@@ -774,12 +866,13 @@ class ReconstructionPanel(QFrame):
         analysis_layout = QVBoxLayout(analysis_box)
         analysis_layout.setSpacing(6)
 
-        hint = QLabel(
-            "Educational reconstruction metrics (FOV units / dimensionless ratios). "
-            "Not calibrated clinical activity concentrations."
-        )
+        hint = QLabel("Educational scores in field-of-view units. Not clinical activity.")
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
+        hint.setToolTip(
+            "Localization, contrast, and noise use the phantom only after reconstruction. "
+            "They are not SUV or Bq/mL."
+        )
         analysis_layout.addWidget(hint)
 
         self._analyze_btn = QPushButton("Run Analysis")
@@ -913,6 +1006,70 @@ class ReconstructionPanel(QFrame):
         mlem = self._is_mlem()
         self._iter_row.setVisible(mlem)
         self._filter_row.setVisible(not mlem)
+        self._sync_convergence()
+
+    def _sync_convergence(self, *_args) -> None:
+        """Show the convergence card only for MLEM, and the chart only when a curve exists."""
+        mlem = self._is_mlem()
+        expanded = self._convergence._toggle.isChecked()
+        self._convergence.setVisible(mlem)
+        self.convergence_canvas.setVisible(mlem and expanded and self._convergence_has_data)
+        self._convergence_empty.setVisible(mlem and expanded and not self._convergence_has_data)
+        stretch = 1 if mlem and expanded and self._convergence_has_data else 0
+        self.layout().setStretchFactor(self._convergence, stretch)
+        if stretch:
+            self._convergence.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            )
+        else:
+            self._convergence.setMinimumHeight(0)
+            self._convergence.setMaximumHeight(16777215)
+            self._convergence.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
+            )
+        self._fit_convergence_height()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_convergence_height()
+
+    def _fit_convergence_height(self) -> None:
+        """Give a plotted MLEM curve a share of the panel, and let the image keep the rest."""
+        if not hasattr(self, "_convergence"):
+            return
+        show = (
+            self._convergence.isVisible()
+            and self._convergence_has_data
+            and self._convergence._toggle.isChecked()
+        )
+        if not show:
+            self._convergence.setMinimumHeight(0)
+            self._convergence.setMaximumHeight(16777215)
+            return
+        if self.height() < 640:
+            target = 136
+        elif self.height() < 760:
+            target = 188
+        else:
+            target = min(300, max(220, int(self.height() * 0.32)))
+        if self._convergence.maximumHeight() == target and self._convergence.minimumHeight() == target:
+            return
+        self._convergence.setMinimumHeight(target)
+        self._convergence.setMaximumHeight(target)
+
+    def _show_convergence_placeholder(self, message: str) -> None:
+        self._convergence_has_data = False
+        self._convergence_empty.setText(message)
+        self.convergence_canvas.show_placeholder(message)
+        self._sync_convergence()
+
+    def _show_convergence_history(self, history) -> None:
+        iterations = getattr(history, "iterations", None)
+        self._convergence_has_data = iterations is not None and len(iterations) > 0
+        self.convergence_canvas.show_history(history)
+        if not self._convergence_has_data:
+            self._convergence_empty.setText("No MLEM iterations recorded.")
+        self._sync_convergence()
 
     def update_coincidence_count(self, n: int) -> None:
         self._n_coincidences = int(n)
@@ -942,7 +1099,7 @@ class ReconstructionPanel(QFrame):
             self._recon_progress.setRange(0, 0)
             self._recon_progress.setFormat("Reconstructing…")
         else:
-            self._run_btn.setText("Run Reconstruction")
+            self._run_btn.setText("Run")
             self._recon_progress.setRange(0, 100)
             self._recon_progress.setValue(0)
             self._recon_progress.setFormat("Idle")
@@ -963,7 +1120,7 @@ class ReconstructionPanel(QFrame):
         self._result = result
         if result.config.method == "mlem":
             self._mlem_result = result
-            self.convergence_canvas.show_history(result.history)
+            self._show_convergence_history(result.history)
         else:
             self._fbp_result = result
         # Image-derived metrics belong to the previous reconstruction.
@@ -1108,7 +1265,7 @@ class ReconstructionPanel(QFrame):
         self.set_busy(False)
         self.clear_analysis(reason)
         self.canvas._show_placeholder(f"{reason}\nRun Reconstruction when ready.")
-        self.convergence_canvas.show_placeholder(
+        self._show_convergence_placeholder(
             "Convergence cleared. Run MLEM to plot a new likelihood curve."
         )
         self._status.setText(
@@ -1147,7 +1304,7 @@ class ReconstructionPanel(QFrame):
         self._recon_progress.setFormat(f"MLEM {iteration}/{total}")
         from types import SimpleNamespace
 
-        self.convergence_canvas.show_history(
+        self._show_convergence_history(
             SimpleNamespace(
                 iterations=np.asarray(self._live_iterations),
                 log_likelihood=np.asarray(self._live_likelihood),
@@ -1161,7 +1318,7 @@ class ReconstructionPanel(QFrame):
         self._fbp_result = fbp
         self._mlem_result = mlem
         self._result = mlem if mlem.has_data else fbp
-        self.convergence_canvas.show_history(mlem.history)
+        self._show_convergence_history(mlem.history)
         self.clear_image_analysis(
             "FBP and MLEM finished. Review the comparison table, or run analysis "
             "on the active (MLEM) image."

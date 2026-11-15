@@ -38,7 +38,7 @@ from petsim.corrections_worker import ComparisonBundle
 from petsim.models.phantom import PhantomState
 from petsim.reconstruction.pipeline import ReconstructionResult
 from petsim.theme import COLORS
-from petsim.widgets.chrome import section_row
+from petsim.widgets.chrome import numeric_item, section_row, style_axes
 
 MODE_TITLES = {
     MODE_IDEAL: "Ideal",
@@ -57,13 +57,7 @@ DISPLAY_MODES = (
 
 
 def _style_ax(ax) -> None:
-    ax.set_facecolor(COLORS["panel"])
-    ax.tick_params(colors=COLORS["text_muted"], labelsize=8)
-    ax.title.set_color(COLORS["text"])
-    ax.xaxis.label.set_color(COLORS["text"])
-    ax.yaxis.label.set_color(COLORS["text"])
-    for spine in ax.spines.values():
-        spine.set_color(COLORS["border"])
+    style_axes(ax, grid=True)
 
 
 class _Plot(FigureCanvasQTAgg):
@@ -119,7 +113,17 @@ class ComparisonCanvas(FigureCanvasQTAgg):
             _style_ax(ax)
             ax.set_xticks([])
             ax.set_yticks([])
-        self._axes[0].text(0.0, 0.5, message, color=COLORS["text_muted"], va="center")
+        self.figure.texts.clear()
+        self.figure.text(
+            0.5,
+            0.45,
+            message,
+            ha="center",
+            va="center",
+            color=COLORS["text_muted"],
+            fontsize=10,
+            wrap=True,
+        )
         self.figure.subplots_adjust(left=0.02, right=0.98, top=0.82, bottom=0.05, wspace=0.2)
         self.draw_idle()
 
@@ -132,6 +136,7 @@ class ComparisonCanvas(FigureCanvasQTAgg):
         positive = stacked[stacked > 0]
         vmax = float(np.percentile(positive, 99)) if positive.size else 1.0
         vmax = max(vmax, 1e-6)
+        self.figure.texts.clear()
         for ax, (title, image) in zip(self._axes, images, strict=False):
             ax.clear()
             _style_ax(ax)
@@ -485,7 +490,8 @@ class CorrectionsPanel(QWidget):
                 _fmt(None if result is None else result.scatter_estimate_counts, 0),
             ]
             for column, value in enumerate(values):
-                self._table.setItem(row_index, column, QTableWidgetItem(value))
+                item = QTableWidgetItem(value) if column == 0 else numeric_item(value)
+                self._table.setItem(row_index, column, item)
 
     def _plot_study(self, trials: list[CorrectionTrial]) -> None:
         finished = [trial for trial in trials if trial.status == "ok" and trial.metrics is not None]

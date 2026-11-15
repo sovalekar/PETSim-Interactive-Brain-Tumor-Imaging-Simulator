@@ -7,18 +7,21 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from petsim.widgets.chrome import section_row
+from petsim.widgets.chrome import CollapsibleSection, MetricCard
 
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
@@ -26,20 +29,42 @@ from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
 
 def _slider_row(
     label: str, minimum: int, maximum: int, value: int, suffix: str = ""
-) -> tuple[QHBoxLayout, QSlider, QLabel]:
-    row = QHBoxLayout()
+) -> tuple[QVBoxLayout, QSlider, QLabel]:
+    row = QVBoxLayout()
+    row.setSpacing(2)
     name = QLabel(label)
-    name.setMinimumWidth(110)
+    name.setObjectName("HintLabel")
+    line = QHBoxLayout()
+    line.setSpacing(8)
     slider = QSlider(Qt.Orientation.Horizontal)
     slider.setMinimum(minimum)
     slider.setMaximum(maximum)
     slider.setValue(value)
+    slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     readout = QLabel()
     readout.setObjectName("ValueLabel")
     readout.setText(f"{value}{suffix}")
+    precise = QSpinBox()
+    precise.setRange(minimum, maximum)
+    precise.setValue(value)
+    if suffix:
+        precise.setSuffix(suffix)
+    precise.setFixedWidth(76)
+    precise.setToolTip("Type an exact value. It uses the same range as the slider.")
+
+    def _from_slider(current: int) -> None:
+        readout.setText(f"{current}{suffix}")
+        precise.blockSignals(True)
+        precise.setValue(current)
+        precise.blockSignals(False)
+
+    slider.valueChanged.connect(_from_slider)
+    precise.valueChanged.connect(slider.setValue)
+    readout.hide()
+    line.addWidget(slider, stretch=1)
+    line.addWidget(precise)
     row.addWidget(name)
-    row.addWidget(slider, stretch=1)
-    row.addWidget(readout)
+    row.addLayout(line)
     return row, slider, readout
 
 
@@ -70,143 +95,137 @@ class ControlsPanel(QFrame):
         title.setObjectName("PanelTitle")
         root.addWidget(title)
 
-        hint = QLabel(
-            "Set the phantom, acquire coincidences, then reconstruct in the "
-            "right panel. Blue badges are settings. Green badges are measured counts."
-        )
+        hint = QLabel("Phantom, acquisition, then reconstruction.")
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
+        hint.setToolTip(
+            "Blue badges are settings you choose. Green badges are counts from the current run. "
+            "The Guide explains the PET terms."
+        )
         root.addWidget(hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         body = QWidget()
+        body.setMinimumWidth(0)
+        body.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         form = QVBoxLayout(body)
-        form.setSpacing(6)
+        form.setContentsMargins(0, 0, 4, 0)
+        form.setSpacing(8)
 
-        # --- Brain ---
-        form.addWidget(section_row("Brain phantom", "parameter"))
-
+        phantom = CollapsibleSection("Phantom configuration", "parameter")
         row, self._brain_radius, self._brain_radius_val = _slider_row(
-            "Radius", 20, 75, 55, "%"
+            "Brain radius", 20, 75, 55, "%"
         )
-        form.addLayout(row)
+        phantom.content.addLayout(row)
         row, self._brain_intensity, self._brain_intensity_val = _slider_row(
-            "Intensity", 5, 100, 35, "%"
+            "Brain intensity", 5, 100, 35, "%"
         )
-        form.addLayout(row)
-
+        phantom.content.addLayout(row)
         self._show_outline = QCheckBox("Show brain outline")
         self._show_outline.setChecked(True)
-        form.addWidget(self._show_outline)
-
-        # --- Tumor ---
-        form.addWidget(section_row("Tumor", "parameter"))
-
+        phantom.content.addWidget(self._show_outline)
         self._tumor_enabled = QCheckBox("Enable tumor")
         self._tumor_enabled.setChecked(True)
-        form.addWidget(self._tumor_enabled)
-
-        row, self._tumor_x, self._tumor_x_val = _slider_row("Center X", -70, 70, 18)
-        form.addLayout(row)
-        row, self._tumor_y, self._tumor_y_val = _slider_row("Center Y", -70, 70, 12)
-        form.addLayout(row)
+        phantom.content.addWidget(self._tumor_enabled)
+        row, self._tumor_x, self._tumor_x_val = _slider_row("Tumor X", -70, 70, 18)
+        phantom.content.addLayout(row)
+        row, self._tumor_y, self._tumor_y_val = _slider_row("Tumor Y", -70, 70, 12)
+        phantom.content.addLayout(row)
         row, self._tumor_radius, self._tumor_radius_val = _slider_row(
-            "Radius", 3, 30, 10, "%"
+            "Tumor radius", 3, 30, 10, "%"
         )
-        form.addLayout(row)
+        phantom.content.addLayout(row)
         row, self._tumor_intensity, self._tumor_intensity_val = _slider_row(
-            "Intensity", 10, 200, 100, "%"
+            "Tumor intensity", 10, 200, 100, "%"
         )
-        form.addLayout(row)
+        phantom.content.addLayout(row)
+        form.addWidget(phantom)
 
-        # --- Acquisition (Stage 2) ---
-        form.addWidget(section_row("PET acquisition", "parameter"))
-
-        btn_row = QHBoxLayout()
+        acquisition = CollapsibleSection("PET acquisition", "parameter")
         self._start_btn = QPushButton("Start Acquisition")
         self._start_btn.setObjectName("PrimaryButton")
         self._pause_btn = QPushButton("Pause")
         self._pause_btn.setEnabled(False)
-        self._reset_acq_btn = QPushButton("Reset Acquisition")
-        btn_row.addWidget(self._start_btn)
+        self._reset_acq_btn = QPushButton("Reset")
+        acquisition.content.addWidget(self._start_btn)
+        btn_row = QHBoxLayout()
         btn_row.addWidget(self._pause_btn)
-        form.addLayout(btn_row)
-        form.addWidget(self._reset_acq_btn)
-
+        btn_row.addWidget(self._reset_acq_btn)
+        acquisition.content.addLayout(btn_row)
         row, self._n_events, self._n_events_val = _slider_row(
-            "Events", 1000, 20_000, 5000
+            "Annihilations", 1000, 20_000, 5000
         )
-        # Coarser steps so large ranges stay usable.
         self._n_events.setSingleStep(500)
         self._n_events.setPageStep(1000)
-        form.addLayout(row)
-
+        self._n_events.setToolTip("How many annihilation events to simulate.")
+        acquisition.content.addLayout(row)
         row, self._efficiency, self._efficiency_val = _slider_row(
-            "Det. efficiency", 20, 100, 80, "%"
+            "Detector efficiency", 20, 100, 80, "%"
         )
-        form.addLayout(row)
-
-        speed_row = QHBoxLayout()
-        speed_row.addWidget(QLabel("Anim. speed"))
+        self._efficiency.setToolTip(
+            "Probability that one 511 keV photon is detected. An ideal coincidence needs both photons."
+        )
+        acquisition.content.addLayout(row)
+        speed_name = QLabel("Animation speed")
+        speed_name.setObjectName("HintLabel")
         self._speed = QComboBox()
         self._speed.addItems(["Slow", "Normal", "Fast"])
         self._speed.setCurrentText("Normal")
-        speed_row.addWidget(self._speed, stretch=1)
-        form.addLayout(speed_row)
-
-        seed_row = QHBoxLayout()
-        self._use_seed = QCheckBox("Random seed")
+        self._speed.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        acquisition.content.addWidget(speed_name)
+        acquisition.content.addWidget(self._speed)
+        self._use_seed = QCheckBox("Use a fixed random seed")
         self._use_seed.setChecked(False)
         self._seed_edit = QLineEdit("42")
         self._seed_edit.setEnabled(False)
         self._seed_edit.setPlaceholderText("integer seed")
-        self._seed_edit.setMaximumWidth(100)
-        seed_row.addWidget(self._use_seed)
-        seed_row.addWidget(self._seed_edit)
-        seed_row.addStretch(1)
-        form.addLayout(seed_row)
-
-        form.addWidget(section_row("Live statistics", "measured"))
+        acquisition.content.addWidget(self._use_seed)
+        acquisition.content.addWidget(self._seed_edit)
         self._progress = QProgressBar()
         self._progress.setRange(0, 1000)
         self._progress.setValue(0)
         self._progress.setFormat("Idle")
         self._progress.setToolTip("Fraction of the requested annihilations that have been simulated.")
-        form.addWidget(self._progress)
+        acquisition.content.addWidget(self._progress)
+        form.addWidget(acquisition)
 
-        self._stat_total = QLabel("Annihilations: 0")
-        self._stat_coin = QLabel("Coincidences: 0")
-        self._stat_rate = QLabel("Coincidence rate: — (expected ε²: —)")
-        self._stat_progress = QLabel("Progress: 0%")
-        for lab in (
-            self._stat_total,
-            self._stat_coin,
-            self._stat_rate,
-            self._stat_progress,
-        ):
+        measured = CollapsibleSection("Live statistics", "measured")
+        cards = QGridLayout()
+        cards.setSpacing(6)
+        annihilations = MetricCard("Annihilations")
+        coincidences = MetricCard("Coincidences")
+        self._stat_total = annihilations.value
+        self._stat_coin = coincidences.value
+        self._stat_total.setText("0")
+        self._stat_coin.setText("0")
+        cards.addWidget(annihilations, 0, 0)
+        cards.addWidget(coincidences, 0, 1)
+        measured.content.addLayout(cards)
+        self._stat_rate = QLabel("Rate —")
+        self._stat_progress = QLabel("Progress 0%")
+        for lab in (self._stat_rate, self._stat_progress):
             lab.setObjectName("HintLabel")
             lab.setWordWrap(True)
-            form.addWidget(lab)
+            measured.content.addWidget(lab)
+        form.addWidget(measured)
 
-        # --- Display ---
-        form.addWidget(section_row("Display", "parameter"))
-
+        display = CollapsibleSection("Detector and display", "parameter")
         cmap_row = QHBoxLayout()
         cmap_row.addWidget(QLabel("Colormap"))
         self._colormap = QComboBox()
         self._colormap.addItems(["hot", "inferno", "magma", "viridis", "gray"])
         cmap_row.addWidget(self._colormap, stretch=1)
-        form.addLayout(cmap_row)
-
+        display.content.addLayout(cmap_row)
         self._show_detectors = QCheckBox("Show detector crystals")
         self._show_detectors.setChecked(True)
-        form.addWidget(self._show_detectors)
-
+        display.content.addWidget(self._show_detectors)
         self._show_labels = QCheckBox("Label detectors (every 8th)")
         self._show_labels.setChecked(False)
-        form.addWidget(self._show_labels)
+        display.content.addWidget(self._show_labels)
+        form.addWidget(display)
 
         form.addStretch(1)
         scroll.setWidget(body)
@@ -227,7 +246,8 @@ class ControlsPanel(QFrame):
         self._tumor_intensity.setToolTip("Tumor uptake relative to a reference of 100%.")
         self._n_events.setToolTip("Number of positron annihilations to simulate.")
         self._efficiency.setToolTip(
-            "Per-detector efficiency ε. An ideal coincidence needs both photons, so the expected rate scales as ε²."
+            "The probability that a photon is successfully detected. "
+            "An ideal coincidence needs both photons, so the expected rate scales as ε²."
         )
         self._speed.setToolTip("How quickly the acquisition animation advances. Does not change the physics.")
         self._use_seed.setToolTip("Fix the random number generator so the same acquisition can be repeated.")
@@ -321,18 +341,18 @@ class ControlsPanel(QFrame):
         self._emit_phantom_state()
 
     def update_stats(self, stats: AcquisitionStats) -> None:
-        self._stat_total.setText(f"Annihilations: {stats.total_events:,}")
+        self._stat_total.setText(f"{stats.total_events:,}")
         if stats.effects_enabled:
-            self._stat_coin.setText(f"Accepted coincidences: {stats.coincidences:,}")
+            self._stat_coin.setText(f"{stats.coincidences:,}")
             self._stat_rate.setText(
-                f"Accepted fraction: {stats.coincidence_percent:.1f}% "
-                f"(ε² {stats.expected_coincidence_percent:.1f}% is the ideal rate)"
+                f"Accepted {stats.coincidence_percent:.1f}%. "
+                f"Ideal ε² {stats.expected_coincidence_percent:.1f}%."
             )
         else:
-            self._stat_coin.setText(f"Coincidences: {stats.coincidences:,}")
+            self._stat_coin.setText(f"{stats.coincidences:,}")
             self._stat_rate.setText(
-                f"Coincidence rate: {stats.coincidence_percent:.1f}% "
-                f"(expected ε²: {stats.expected_coincidence_percent:.1f}%)"
+                f"Rate {stats.coincidence_percent:.1f}%. "
+                f"Ideal ε² {stats.expected_coincidence_percent:.1f}%."
             )
         self._stat_progress.setText(f"Progress: {stats.progress_percent:.1f}%")
         self._progress.setValue(int(round(stats.progress_percent * 10)))
