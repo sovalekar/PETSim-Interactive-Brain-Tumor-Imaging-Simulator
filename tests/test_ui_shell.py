@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QApplication, QLabel, QStackedWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QStackedWidget
 
 from petsim.main_window import MainWindow
 from petsim.theme import DARK_STYLESHEET
@@ -43,6 +44,15 @@ def test_single_header_navigation_and_scatter_wording(qapp):
     assert "crystal" in window.detector_view.findChildren(QLabel)[1].text()
     assert window.controls._progress.maximum() == 1000
     assert window.reconstruction._recon_progress.format() == "Idle"
+    assert window._header_status.text() == "Ready"
+    assert "acqu" not in window._header_status.text().lower()
+    sidebar = window.controls.findChild(QScrollArea)
+    assert sidebar.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    for width, height in ((960, 620), (1280, 800), (1600, 1000)):
+        window.resize(width, height)
+        qapp.processEvents()
+        assert sidebar.horizontalScrollBar().maximum() == 0
+        assert window.splitter.count() == 3
     assert set(KIND_HELP) == {"parameter", "measured", "estimated", "truth"}
     assert "Parameter" in _chip_texts(window.controls)
     assert "Measured" in _chip_texts(window.controls)

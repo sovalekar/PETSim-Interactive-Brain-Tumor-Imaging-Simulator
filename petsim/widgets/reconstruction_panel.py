@@ -6,7 +6,7 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -93,16 +93,41 @@ def _format_algorithm_table(
     return "\n".join(lines)
 
 
+class _AnalysisScroll(QScrollArea):
+    """Vertical-only analysis pane with a modest preferred height."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
+    def sizeHint(self) -> QSize:
+        return QSize(240, 120)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 0)
+
+
 class ReconstructionCanvas(FigureCanvasQTAgg):
     """Embedded Matplotlib canvas for recon / sinogram / comparison views."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        self._figure = Figure(figsize=(4.2, 4.2), dpi=100, facecolor=COLORS["panel"])
+        self._figure = Figure(figsize=(3.6, 2.8), dpi=100, facecolor=COLORS["panel"])
         super().__init__(self._figure)
         self.setParent(parent)
-        self._show_placeholder(
-            "No reconstruction available\n\nAcquire PET data and run a reconstruction to generate an image."
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding
         )
+        self.setMinimumHeight(64)
+        self._show_placeholder("No reconstruction yet\n\nAcquire coincidences, then run FBP or MLEM.")
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(160, 64)
+
+    def sizeHint(self) -> QSize:
+        return QSize(360, 200)
 
     def _style_axis(self, ax) -> None:
         style_axes(ax)
@@ -608,26 +633,14 @@ class ReconstructionPanel(QFrame):
 
         title = QLabel("Reconstruction")
         title.setObjectName("PanelTitle")
+        title.setToolTip(
+            "FBP or MLEM from the measured coincidences. Purple values are the known "
+            "phantom, amber values are estimates, and green values are measurements. "
+            "The Guide explains each score."
+        )
         root.addWidget(title)
 
-        subtitle = QLabel(
-            "Choose FBP or MLEM. Purple values are the known phantom. "
-            "Amber values are estimates. Green values are measurements from the image."
-        )
-        subtitle.setObjectName("HintLabel")
-        subtitle.setWordWrap(True)
-        root.addWidget(subtitle)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        body = QWidget()
-        layout = QVBoxLayout(body)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        scroll.setWidget(body)
-        root.addWidget(scroll, stretch=1)
+        layout = root
 
         # --- Controls ---
         row = QHBoxLayout()
@@ -673,18 +686,24 @@ class ReconstructionPanel(QFrame):
         layout.addWidget(self._filter_row)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("Display"))
+        row.setSpacing(6)
+        display_label = QLabel("Display")
+        row.addWidget(display_label)
         self._display = QComboBox()
+        self._display.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._display.setMinimumContentsLength(8)
         self._display.addItems(
             ["Reconstructed Image", "Sinogram", "Comparison", "FBP vs MLEM"]
         )
         self._display.currentTextChanged.connect(self._refresh_canvas)
-        row.addWidget(self._display, stretch=1)
-        layout.addLayout(row)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Colormap"))
+        row.addWidget(self._display, stretch=2)
+        map_label = QLabel("Map")
+        map_label.setToolTip("Color map for the image display. This does not change the data.")
+        row.addWidget(map_label)
         self._cmap = QComboBox()
+        self._cmap.setToolTip("Color map for the image display. This does not change the data.")
         self._cmap.addItems(["hot", "inferno", "magma", "viridis", "gray"])
         self._cmap.currentTextChanged.connect(self._refresh_canvas)
         row.addWidget(self._cmap, stretch=1)
@@ -701,51 +720,62 @@ class ReconstructionPanel(QFrame):
         layout.addWidget(self._shared_scale)
 
         self.canvas = ReconstructionCanvas(self)
-        self.canvas.setMinimumHeight(280)
-        self.canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        layout.addWidget(self.canvas)
+        layout.addWidget(self.canvas, stretch=1)
 
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
         self._status = QLabel("Recorded coincidences: 0")
         self._status.setObjectName("HintLabel")
         self._status.setWordWrap(True)
-        layout.addWidget(self._status)
+        status_row.addWidget(self._status, stretch=1)
 
         self._recon_progress = QProgressBar()
         self._recon_progress.setRange(0, 100)
         self._recon_progress.setValue(0)
         self._recon_progress.setFormat("Idle")
+        self._recon_progress.setFixedWidth(108)
         self._recon_progress.setToolTip("MLEM iteration progress. FBP finishes in one step, so this stays idle.")
-        layout.addWidget(self._recon_progress)
+        status_row.addWidget(self._recon_progress)
+        layout.addLayout(status_row)
 
-        self._run_btn = QPushButton("Run Reconstruction")
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        self._run_btn = QPushButton("Run")
         self._run_btn.setObjectName("PrimaryButton")
         self._run_btn.setEnabled(False)
+        self._run_btn.setToolTip("Reconstruct the current sinogram with the selected method.")
         self._run_btn.clicked.connect(self._on_run)
-        layout.addWidget(self._run_btn)
+        actions.addWidget(self._run_btn, stretch=1)
 
-        self._compare_algs_btn = QPushButton("Compare FBP and MLEM")
+        self._compare_algs_btn = QPushButton("Compare")
         self._compare_algs_btn.setEnabled(False)
+        self._compare_algs_btn.setToolTip("Run FBP and MLEM on the same corrected sinogram and show both images.")
         self._compare_algs_btn.clicked.connect(self._on_compare_algorithms)
-        layout.addWidget(self._compare_algs_btn)
+        actions.addWidget(self._compare_algs_btn, stretch=1)
 
-        self._cancel_btn = QPushButton("Cancel Reconstruction")
+        self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setObjectName("DangerButton")
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.setToolTip("Stop the reconstruction thread. A partial MLEM image is not kept.")
         self._cancel_btn.clicked.connect(self.cancel_requested.emit)
-        layout.addWidget(self._cancel_btn)
+        actions.addWidget(self._cancel_btn, stretch=1)
+        layout.addLayout(actions)
+
+        scroll = _AnalysisScroll()
+        body = QWidget()
+        body.setMinimumWidth(0)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        scroll.setWidget(body)
+        root.addWidget(scroll)
 
         conv_box = QGroupBox("MLEM Convergence")
         conv_layout = QVBoxLayout(conv_box)
-        conv_note = QLabel(
-            "Poisson log-likelihood Σ (y log ŷ − ŷ), constant log(y!) omitted. "
+        conv_box.setToolTip(
+            "Poisson log-likelihood Σ (y log ŷ − ŷ), with the constant log(y!) omitted. "
             "Relative change is ‖xⁿ − xⁿ⁻¹‖ / ‖xⁿ⁻¹‖."
         )
-        conv_note.setObjectName("HintLabel")
-        conv_note.setWordWrap(True)
-        conv_layout.addWidget(conv_note)
         self.convergence_canvas = ConvergenceCanvas(self)
         self.convergence_canvas.setMinimumHeight(180)
         conv_layout.addWidget(self.convergence_canvas)
@@ -761,12 +791,13 @@ class ReconstructionPanel(QFrame):
         analysis_layout = QVBoxLayout(analysis_box)
         analysis_layout.setSpacing(6)
 
-        hint = QLabel(
-            "Educational reconstruction metrics (FOV units / dimensionless ratios). "
-            "Not calibrated clinical activity concentrations."
-        )
+        hint = QLabel("Educational scores in field-of-view units. Not clinical activity.")
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
+        hint.setToolTip(
+            "Localization, contrast, and noise use the phantom only after reconstruction. "
+            "They are not SUV or Bq/mL."
+        )
         analysis_layout.addWidget(hint)
 
         self._analyze_btn = QPushButton("Run Analysis")
@@ -929,7 +960,7 @@ class ReconstructionPanel(QFrame):
             self._recon_progress.setRange(0, 0)
             self._recon_progress.setFormat("Reconstructing…")
         else:
-            self._run_btn.setText("Run Reconstruction")
+            self._run_btn.setText("Run")
             self._recon_progress.setRange(0, 100)
             self._recon_progress.setValue(0)
             self._recon_progress.setFormat("Idle")

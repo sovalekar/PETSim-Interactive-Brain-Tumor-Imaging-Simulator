@@ -7,12 +7,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSpinBox,
     QVBoxLayout,
@@ -27,14 +29,18 @@ from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
 
 def _slider_row(
     label: str, minimum: int, maximum: int, value: int, suffix: str = ""
-) -> tuple[QHBoxLayout, QSlider, QLabel]:
-    row = QHBoxLayout()
+) -> tuple[QVBoxLayout, QSlider, QLabel]:
+    row = QVBoxLayout()
+    row.setSpacing(2)
     name = QLabel(label)
-    name.setMinimumWidth(96)
+    name.setObjectName("HintLabel")
+    line = QHBoxLayout()
+    line.setSpacing(8)
     slider = QSlider(Qt.Orientation.Horizontal)
     slider.setMinimum(minimum)
     slider.setMaximum(maximum)
     slider.setValue(value)
+    slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     readout = QLabel()
     readout.setObjectName("ValueLabel")
     readout.setText(f"{value}{suffix}")
@@ -43,7 +49,7 @@ def _slider_row(
     precise.setValue(value)
     if suffix:
         precise.setSuffix(suffix)
-    precise.setFixedWidth(84)
+    precise.setFixedWidth(76)
     precise.setToolTip("Type an exact value. It uses the same range as the slider.")
 
     def _from_slider(current: int) -> None:
@@ -55,9 +61,10 @@ def _slider_row(
     slider.valueChanged.connect(_from_slider)
     precise.valueChanged.connect(slider.setValue)
     readout.hide()
+    line.addWidget(slider, stretch=1)
+    line.addWidget(precise)
     row.addWidget(name)
-    row.addWidget(slider, stretch=1)
-    row.addWidget(precise)
+    row.addLayout(line)
     return row, slider, readout
 
 
@@ -88,20 +95,25 @@ class ControlsPanel(QFrame):
         title.setObjectName("PanelTitle")
         root.addWidget(title)
 
-        hint = QLabel(
-            "Set the phantom, acquire coincidences, then reconstruct in the "
-            "right panel. Blue badges are settings. Green badges are measured counts."
-        )
+        hint = QLabel("Phantom, acquisition, then reconstruction.")
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
+        hint.setToolTip(
+            "Blue badges are settings you choose. Green badges are counts from the current run. "
+            "The Guide explains the PET terms."
+        )
         root.addWidget(hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         body = QWidget()
+        body.setMinimumWidth(0)
+        body.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         form = QVBoxLayout(body)
-        form.setSpacing(6)
+        form.setContentsMargins(0, 0, 4, 0)
+        form.setSpacing(8)
 
         phantom = CollapsibleSection("Phantom configuration", "parameter")
         row, self._brain_radius, self._brain_radius_val = _slider_row(
@@ -144,33 +156,34 @@ class ControlsPanel(QFrame):
         btn_row.addWidget(self._reset_acq_btn)
         acquisition.content.addLayout(btn_row)
         row, self._n_events, self._n_events_val = _slider_row(
-            "Events", 1000, 20_000, 5000
+            "Annihilations", 1000, 20_000, 5000
         )
         self._n_events.setSingleStep(500)
         self._n_events.setPageStep(1000)
+        self._n_events.setToolTip("How many annihilation events to simulate.")
         acquisition.content.addLayout(row)
         row, self._efficiency, self._efficiency_val = _slider_row(
-            "Det. efficiency", 20, 100, 80, "%"
+            "Detector efficiency", 20, 100, 80, "%"
+        )
+        self._efficiency.setToolTip(
+            "Probability that one 511 keV photon is detected. An ideal coincidence needs both photons."
         )
         acquisition.content.addLayout(row)
-        speed_row = QHBoxLayout()
-        speed_row.addWidget(QLabel("Anim. speed"))
+        speed_name = QLabel("Animation speed")
+        speed_name.setObjectName("HintLabel")
         self._speed = QComboBox()
         self._speed.addItems(["Slow", "Normal", "Fast"])
         self._speed.setCurrentText("Normal")
-        speed_row.addWidget(self._speed, stretch=1)
-        acquisition.content.addLayout(speed_row)
-        seed_row = QHBoxLayout()
-        self._use_seed = QCheckBox("Random seed")
+        self._speed.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        acquisition.content.addWidget(speed_name)
+        acquisition.content.addWidget(self._speed)
+        self._use_seed = QCheckBox("Use a fixed random seed")
         self._use_seed.setChecked(False)
         self._seed_edit = QLineEdit("42")
         self._seed_edit.setEnabled(False)
         self._seed_edit.setPlaceholderText("integer seed")
-        self._seed_edit.setMaximumWidth(120)
-        seed_row.addWidget(self._use_seed)
-        seed_row.addWidget(self._seed_edit)
-        seed_row.addStretch(1)
-        acquisition.content.addLayout(seed_row)
+        acquisition.content.addWidget(self._use_seed)
+        acquisition.content.addWidget(self._seed_edit)
         self._progress = QProgressBar()
         self._progress.setRange(0, 1000)
         self._progress.setValue(0)
@@ -180,18 +193,19 @@ class ControlsPanel(QFrame):
         form.addWidget(acquisition)
 
         measured = CollapsibleSection("Live statistics", "measured")
-        cards = QHBoxLayout()
-        annihilations = MetricCard("Annihilations", "measured")
-        coincidences = MetricCard("Coincidences", "measured")
+        cards = QGridLayout()
+        cards.setSpacing(6)
+        annihilations = MetricCard("Annihilations")
+        coincidences = MetricCard("Coincidences")
         self._stat_total = annihilations.value
         self._stat_coin = coincidences.value
         self._stat_total.setText("0")
         self._stat_coin.setText("0")
-        cards.addWidget(annihilations)
-        cards.addWidget(coincidences)
+        cards.addWidget(annihilations, 0, 0)
+        cards.addWidget(coincidences, 0, 1)
         measured.content.addLayout(cards)
-        self._stat_rate = QLabel("Coincidence rate: —")
-        self._stat_progress = QLabel("Progress: 0%")
+        self._stat_rate = QLabel("Rate —")
+        self._stat_progress = QLabel("Progress 0%")
         for lab in (self._stat_rate, self._stat_progress):
             lab.setObjectName("HintLabel")
             lab.setWordWrap(True)
@@ -331,14 +345,14 @@ class ControlsPanel(QFrame):
         if stats.effects_enabled:
             self._stat_coin.setText(f"{stats.coincidences:,}")
             self._stat_rate.setText(
-                f"Accepted fraction: {stats.coincidence_percent:.1f}% "
-                f"(ε² {stats.expected_coincidence_percent:.1f}% is the ideal rate)"
+                f"Accepted {stats.coincidence_percent:.1f}%. "
+                f"Ideal ε² {stats.expected_coincidence_percent:.1f}%."
             )
         else:
             self._stat_coin.setText(f"{stats.coincidences:,}")
             self._stat_rate.setText(
-                f"Coincidence rate: {stats.coincidence_percent:.1f}% "
-                f"(expected ε²: {stats.expected_coincidence_percent:.1f}%)"
+                f"Rate {stats.coincidence_percent:.1f}%. "
+                f"Ideal ε² {stats.expected_coincidence_percent:.1f}%."
             )
         self._stat_progress.setText(f"Progress: {stats.progress_percent:.1f}%")
         self._progress.setValue(int(round(stats.progress_percent * 10)))

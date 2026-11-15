@@ -161,7 +161,7 @@ class DetectorCanvas(FigureCanvasQTAgg):
                     theta1=_degrees(t0),
                     theta2=_degrees(t1),
                     color=COLORS["detector"],
-                    linewidth=3.5,
+                    linewidth=4.2,
                     zorder=6,
                 )
                 ax.add_patch(arc)
@@ -185,8 +185,9 @@ class DetectorCanvas(FigureCanvasQTAgg):
                         zorder=8,
                     )
 
-        ax.set_xlim(-1.25, 1.25)
-        ax.set_ylim(-1.25, 1.25)
+        limit = 1.30 if self._show_labels else 1.12
+        ax.set_xlim(-limit, limit)
+        ax.set_ylim(-limit, limit)
         ax.set_aspect("equal")
         ax.set_xticks([])
         ax.set_yticks([])
@@ -194,8 +195,7 @@ class DetectorCanvas(FigureCanvasQTAgg):
             spine.set_visible(False)
 
         ax.set_title("")
-
-        self._figure.tight_layout(pad=0.6)
+        self._figure.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
         self._base_drawn = True
         self.draw_idle()
 
@@ -349,8 +349,9 @@ class DetectorCanvas(FigureCanvasQTAgg):
 
     def fit_view(self) -> None:
         """Restore the square field of view around the detector ring."""
-        self._ax.set_xlim(-1.25, 1.25)
-        self._ax.set_ylim(-1.25, 1.25)
+        limit = 1.30 if self._show_labels else 1.12
+        self._ax.set_xlim(-limit, limit)
+        self._ax.set_ylim(-limit, limit)
         self._ax.set_aspect("equal")
         self.draw_idle()
 
@@ -365,8 +366,8 @@ class DetectorView(QFrame):
         self.setObjectName("Panel")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(4)
 
         title = QLabel("PET Detector Geometry")
         title.setObjectName("PanelTitle")
@@ -397,7 +398,7 @@ class DetectorView(QFrame):
         fit = QPushButton("Fit view")
         fit.setToolTip("Center the detector ring in the viewport.")
         fit.clicked.connect(self.canvas.fit_view)
-        labels = QPushButton("Detector labels")
+        labels = QPushButton("Labels")
         labels.setToolTip("Show or hide every 8th crystal index. This uses the same setting as the control sidebar.")
         labels.clicked.connect(self.labels_toggled.emit)
         export = QPushButton("Export image")

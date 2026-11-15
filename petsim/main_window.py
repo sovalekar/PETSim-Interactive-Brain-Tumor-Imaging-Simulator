@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -40,6 +41,24 @@ from petsim.widgets.detector_physics_panel import DetectorPhysicsPanel
 from petsim.widgets.experiment_panel import ExperimentPanel
 from petsim.widgets.detector_view import DetectorView
 from petsim.widgets.reconstruction_panel import ReconstructionPanel
+
+
+def _header_state(message: str) -> str:
+    """One word for the header. The full sentence stays in the status bar."""
+    text = message.lower()
+    if text.startswith("ready"):
+        return "Ready"
+    if "paused" in text:
+        return "Paused"
+    if "complete" in text:
+        return "Complete"
+    if "fail" in text or "unavailable" in text or "error" in text:
+        return "Check status"
+    if "reconstruct" in text or text.startswith("mlem"):
+        return "Reconstructing"
+    if "acquir" in text:
+        return "Acquiring"
+    return "Working"
 
 
 class MainWindow(QMainWindow):
@@ -112,17 +131,17 @@ class MainWindow(QMainWindow):
         self.controls = ControlsPanel()
         self.detector_view = DetectorView()
         self.reconstruction = ReconstructionPanel()
-        self.controls.setMinimumWidth(300)
-        self.detector_view.setMinimumWidth(300)
-        self.reconstruction.setMinimumWidth(320)
+        self.controls.setMinimumWidth(240)
+        self.detector_view.setMinimumWidth(260)
+        self.reconstruction.setMinimumWidth(280)
 
         self.splitter.addWidget(self.controls)
         self.splitter.addWidget(self.detector_view)
         self.splitter.addWidget(self.reconstruction)
         self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 5)
+        self.splitter.setStretchFactor(1, 3)
         self.splitter.setStretchFactor(2, 4)
-        self.splitter.setSizes([340, 600, 420])
+        self.splitter.setSizes([260, 480, 540])
 
         workstation = QWidget()
         station_layout = QVBoxLayout(workstation)
@@ -156,8 +175,9 @@ class MainWindow(QMainWindow):
         titles.setSpacing(0)
         app_title = QLabel("PETSim")
         app_title.setObjectName("AppTitle")
-        app_sub = QLabel("Interactive Brain Tumor Imaging Simulator")
+        app_sub = QLabel("Brain tumor PET")
         app_sub.setObjectName("AppSubtitle")
+        app_title.setToolTip("Interactive Brain Tumor Imaging Simulator")
         titles.addWidget(app_title)
         titles.addWidget(app_sub)
         bar_layout.addLayout(titles)
@@ -174,11 +194,11 @@ class MainWindow(QMainWindow):
         bar_layout.addStretch(1)
         self._header_status = QLabel("Ready")
         self._header_status.setObjectName("HeaderStatus")
-        self._header_status.setMaximumWidth(220)
+        self._header_status.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self._header_progress = QProgressBar()
         self._header_progress.setRange(0, 100)
         self._header_progress.setValue(0)
-        self._header_progress.setFixedWidth(140)
+        self._header_progress.setFixedWidth(96)
         self._header_progress.setFormat("Idle")
         self._header_progress.setToolTip("Progress of the current acquisition or reconstruction.")
         help_btn = QPushButton("Guide")
@@ -200,10 +220,7 @@ class MainWindow(QMainWindow):
     def _note(self, message: str) -> None:
         self.statusBar().showMessage(message)
         if hasattr(self, "_header_status"):
-            short = message.split("·", 1)[0].strip()
-            if len(short) > 36:
-                short = short[:35].rstrip() + "…"
-            self._header_status.setText(short)
+            self._header_status.setText(_header_state(message))
             self._header_status.setToolTip(message)
 
     def _set_header_progress(self, value: int, text: str) -> None:
@@ -675,7 +692,7 @@ class MainWindow(QMainWindow):
         box.setChecked(not box.isChecked())
 
     def _reset_splitter(self) -> None:
-        self.splitter.setSizes([340, 600, 420])
+        self.splitter.setSizes([260, 480, 540])
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
