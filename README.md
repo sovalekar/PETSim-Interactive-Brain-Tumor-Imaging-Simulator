@@ -81,7 +81,44 @@ Open **Attenuation** in the simulation controls, turn on tissue attenuation, and
 
 ### Limitations
 
-The head is a uniform ellipse, not a CT. The sinogram weight uses the bin-center ray, not a crystal-pair matrix. The survival floor limits amplification on the longest chords. Random coincidences inserted at the detector are not given a tissue path. No time-of-flight information is used.
+The head is a uniform ellipse, not a CT. μ does not change in bone, air, or the tumor. The sinogram weight is the chord through the parallel-beam bin center, not a crystal-pair system matrix. The survival floor is 10⁻³, so the longest chords are not amplified without limit. Filtered backprojection smooths the sinogram after the 1/a weight, which mixes neighboring attenuation factors. Random coincidences inserted at the detector have no tissue path. There is no time-of-flight reconstruction.
+
+Stage 10 region and localization functions are unchanged. The activity raster and the attenuation map use the ellipse `(x / 0.85)² + y² ≤ brain_radius²`. The background ROI and the localization search use the circle `x² + y² ≤ brain_radius²`. On a 128×128 grid that circle has 3,844 pixels and the ellipse has 3,260. The extra 584 pixels have zero activity and zero μ. The ellipse does not extend outside the circle.
+
+The background score is a local annulus around the tumor, clipped to that circle. For the default tumor at (0.18, 0.12), 1 of 637 annulus pixels lies outside the ellipse, and the phantom contrast changes from 2.554 to 2.548 if that pixel is removed. NRMSE already uses the elliptical activity raster. A tumor moved to x = 0.35 puts about 25% of the same annulus outside the ellipse. Those positions need the ellipse intersection as an optional Stage 11 score. They do not change the Stage 10 default.
+
+Scale-normalized NRMSE removes one global intensity factor, so it does not measure the photons that were absorbed. CRC divides reconstructed contrast by the phantom contrast on the same ROIs. The unattenuated reconstruction itself has CRC near 0.73–0.77 under the protocol below, so a corrected CRC near that range is agreement with the ideal reconstruction, not recovery of the phantom.
+
+Localization uses the existing brightest-pixel search inside the circular brain. The known tumor position is used only to compute the distance after the estimate exists. The `reliable` flag means a positive peak was found. It does not mean the peak is the tumor. Every seed is reported. The mean and the median both include the large errors. One dominant noise peak inside the ellipse can be far from the tumor while a second peak is only moderately bright, so a rival-peak ratio is not used to drop seeds.
+
+### Quantitative validation
+
+Protocol: default phantom, μ = 0.096 cm⁻¹, 10 cm per field-of-view radius, survival floor 10⁻³, detector physics off, efficiency 1, 5,000 annihilations, seeds 1–5. Each seed is simulated twice so the attenuated detections are a subset of the same emissions. Reconstruction uses the defaults: 128×128, 96×128 sinogram, Hann filter, FBP pre-smooth σs = 1.5 and σθ = 0.75, 10 MLEM iterations. About 2,125–2,207 coincidences survive. Scores use the existing NRMSE, TBR, CRC, localization error, and background CV. Phantom contrast on these ROIs is 2.554.
+
+| Method | Condition | NRMSE | TBR | CRC | Background CV |
+| --- | --- | --- | --- | --- | --- |
+| FBP | Ideal | 0.547 ± 0.008 | 2.97 ± 0.12 | 0.773 ± 0.048 | 0.601 ± 0.037 |
+| FBP | Attenuated | 0.695 ± 0.014 | 2.84 ± 0.30 | 0.721 ± 0.119 | 0.792 ± 0.037 |
+| FBP | Corrected | 0.660 ± 0.018 | 2.99 ± 0.37 | 0.781 ± 0.144 | 0.772 ± 0.026 |
+| MLEM | Ideal | 0.631 ± 0.007 | 2.87 ± 0.08 | 0.733 ± 0.032 | 0.815 ± 0.033 |
+| MLEM | Attenuated | 0.806 ± 0.006 | 2.78 ± 0.24 | 0.698 ± 0.094 | 1.226 ± 0.074 |
+| MLEM | Corrected | 0.781 ± 0.004 | 2.95 ± 0.29 | 0.763 ± 0.115 | 1.187 ± 0.052 |
+
+The spread is the standard deviation across the five seeds with divisor 5. NRMSE improved on every seed relative to the attenuated image, and CRC moved closer to 1 on every seed. Corrected NRMSE stays above the ideal reconstruction. Background CV stays above the ideal image on every seed. These are measured results for this protocol.
+
+Localization error is in field-of-view units. All five seeds are listed. No seed is removed.
+
+| Seed | FBP ideal | FBP attenuated | FBP corrected | MLEM ideal | MLEM attenuated | MLEM corrected |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0.033 | 0.047 | 0.035 | 0.015 | 0.399 | 0.021 |
+| 2 | 0.028 | 0.038 | 0.017 | 0.008 | 0.050 | 0.016 |
+| 3 | 0.020 | 0.014 | 0.002 | 0.571 | 0.657 | 0.016 |
+| 4 | 0.018 | 0.011 | 0.003 | 0.113 | 0.156 | 0.015 |
+| 5 | 0.010 | 0.021 | 0.006 | 0.015 | 0.009 | 0.009 |
+| Mean | 0.022 | 0.026 | 0.013 | 0.144 | 0.254 | 0.015 |
+| Median | 0.020 | 0.021 | 0.006 | 0.015 | 0.156 | 0.016 |
+
+The MLEM mean is carried by seeds 3 and 1. The ideal MLEM median is 0.015. All 30 estimates were produced, and all 30 fell inside the ellipse. With attenuation disabled, or with μ = 0, the events and the FBP and MLEM images match the Stage 10.2 path. Applying the attenuation weight a second time changes both images. The weighted forward and adjoint operators agree to about 10⁻¹⁴ on a random test image.
 
 ## Stage 10 overview
 
@@ -286,7 +323,7 @@ The tracked objective is
 L(x) = \sum_i \big(y_i \log \hat y_i - \hat y_i\big)
 \]
 
-with `ŷ = Ax`, omitting the constant `Σ log(y!)`. Relative change is `‖xⁿ − xⁿ⁻¹‖ / ‖xⁿ⁻¹‖`. More iterations usually raise `L` and can look smoother, but they are not guaranteed to improve localization error, contrast, or background CV on one noisy realization. Early iterates are blurry; later iterates fit noise. That is expected for this simplified model (no attenuation, scatter, or randoms).
+with `ŷ = Ax` when attenuation is off. With the Stage 11 weight on, `ŷ = a ⊙ (Ax)` and the sensitivity is the backprojection of `a`. The constant `Σ log(y!)` is omitted either way. Relative change is `‖xⁿ − xⁿ⁻¹‖ / ‖xⁿ⁻¹‖`. More iterations usually raise `L` and can look smoother, but they are not guaranteed to improve localization error, contrast, or background CV on one noisy realization. Early iterates are blurry; later iterates fit noise. Scatter and randoms are not inside this projector.
 
 ### Using Stage 5
 
@@ -394,8 +431,8 @@ Default Hann-windowed ramp filter; negatives from ringing are kept in the raw ar
 
 ### Model assumptions (still idealized)
 
-- Ideal back-to-back emission, 2-D geometry  
-- No attenuation, scatter, randoms, positron range, or TOF  
+- Ideal back-to-back emission and 2-D geometry. Attenuation is optional and off by default.
+- No scatter or randoms in the geometric projector, no positron range, and no time-of-flight reconstruction
 - 48 crystals → limited distinct LORs → angular sampling artifacts are expected  
 
 ---
@@ -498,8 +535,9 @@ coincidence-count comparison, analysis invalidation, and Stage 2–3 regression 
 
 - Educational model only — not clinically accurate or validated for patient imaging  
 - Coarse 48-detector geometry + finite counts → residual streaks and localization scatter  
-- Attenuation is a uniform ellipse and a parallel-beam bin weight, not a clinical correction  
-- ROI geometry uses phantom ground truth for evaluation; localization estimates do not  
+- Attenuation is a uniform ellipse and a parallel-beam bin weight, not a clinical correction
+- Stage 10 ROI and localization code still use the circular brain. The attenuation map uses the taller ellipse. See the Stage 11 limitations for the pixel counts.
+- Localization error is reported for every seed, with the mean and the median. Large errors stay in both summaries.  
 - Count-comparison curves are single-realization nested prefixes — not ensemble averages  
 - Very low counts remain noisy; prefer ≥5k coincidences for stable demos  
 - MLEM uses an unsmoothed sinogram; FBP may pre-smooth. Same coincidences, different preprocessing  

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from petsim.analysis.localization import localize_tumor
 from petsim.analysis.roi import build_tumor_background_rois
 from petsim.models.detector import DetectorRing
 from petsim.models.phantom import BrainPhantom, PhantomState
@@ -31,11 +32,17 @@ from petsim.reconstruction.pipeline import ReconstructionConfig, reconstruct_fro
 
 @dataclass
 class RegionScore:
-    """Tumor mean and background coefficient of variation in image units."""
+    """Tumor mean, background CV, and localization error in image units.
+
+    ``localization_error`` is the distance from the existing estimator to the
+    known tumor center. The estimator does not receive that center as a search
+    guide. NaN means the estimator produced no position. Every seed is kept.
+    """
 
     tumor_mean: float
     background_cv: float
     n_coincidences: int
+    localization_error: float
 
 
 @dataclass
@@ -89,13 +96,55 @@ class AttenuationStudyResult:
     def mean_ideal_cv(self) -> float:
         return _nanmean([item.ideal.background_cv for item in self.comparisons])
 
+    @property
+    def mean_ideal_localization(self) -> float:
+        return _nanmean([item.ideal.localization_error for item in self.comparisons])
+
+    @property
+    def median_ideal_localization(self) -> float:
+        return _nanmedian([item.ideal.localization_error for item in self.comparisons])
+
+    @property
+    def mean_attenuated_localization(self) -> float:
+        return _nanmean([item.attenuated.localization_error for item in self.comparisons])
+
+    @property
+    def median_attenuated_localization(self) -> float:
+        return _nanmedian([item.attenuated.localization_error for item in self.comparisons])
+
+    @property
+    def mean_corrected_localization(self) -> float:
+        return _nanmean([item.corrected.localization_error for item in self.comparisons])
+
+    @property
+    def median_corrected_localization(self) -> float:
+        return _nanmedian([item.corrected.localization_error for item in self.comparisons])
+
+
+def _finite(values: list[float]) -> np.ndarray:
+    array = np.asarray(values, dtype=np.float64)
+    return array[np.isfinite(array)]
+
 
 def _nanmean(values: list[float]) -> float:
-    array = np.asarray(values, dtype=np.float64)
-    finite = array[np.isfinite(array)]
+    finite = _finite(values)
     if finite.size == 0:
         return float("nan")
     return float(np.mean(finite))
+
+
+def _nanmedian(values: list[float]) -> float:
+    """Median of every finite error. Large errors stay in the sample."""
+    finite = _finite(values)
+    if finite.size == 0:
+        return float("nan")
+    return float(np.median(finite))
+
+
+def _fmt_error(value: float) -> str:
+    if not np.isfinite(value):
+        return "no estimate"
+    return f"{value:.3f}"
 
 
 def _endpoints(events) -> tuple[np.ndarray, np.ndarray]:
@@ -126,7 +175,18 @@ def _score(image: np.ndarray, state: PhantomState, n_coincidences: int, fov: flo
         cv = float("nan")
     else:
         cv = float(np.std(background) / mean)
-    return RegionScore(tumor_mean, cv, int(n_coincidences))
+    # The known center is passed only so the existing function can return a
+    # distance. Tests lock that this center does not move the estimate.
+    located = localize_tumor(
+        display,
+        fov=fov,
+        brain_radius=state.brain_radius,
+        neighborhood_radius=max(2.0 * state.tumor_radius, 0.12),
+        true_xy=(state.tumor_x, state.tumor_y) if state.tumor_enabled else None,
+        tumor_enabled=state.tumor_enabled,
+    )
+    error = float(located.error) if located.error is not None else float("nan")
+    return RegionScore(tumor_mean, cv, int(n_coincidences), error)
 
 
 def run_attenuation_study(
@@ -212,11 +272,36 @@ def run_attenuation_study(
     cv_change = _nanmean(
         [item.corrected.background_cv - item.ideal.background_cv for item in comparisons]
     )
+    per_seed = [
+        (
+            f"seed {item.seed} localization "
+            f"ideal {_fmt_error(item.ideal.localization_error)}, "
+            f"attenuated {_fmt_error(item.attenuated.localization_error)}, "
+            f"corrected {_fmt_error(item.corrected.localization_error)}"
+        )
+        for item in comparisons
+    ]
+    produced = sum(
+        int(np.isfinite(score.localization_error))
+        for item in comparisons
+        for score in (item.ideal, item.attenuated, item.corrected)
+    )
+    expected = 3 * len(comparisons)
     message = (
         f"{recon.method.upper()} · {len(comparisons)} seed(s) · "
         f"mean recovery gain {mean_gain:+.3f} · "
         f"corrected background CV minus ideal {cv_change:+.3f}. "
-        "Recovery compares tumor means. The CV change is noise, not accuracy."
+        "Recovery compares tumor means. The CV change is noise, not accuracy. "
+        + " ".join(per_seed)
+        + ". "
+        f"Localization error, all seeds: "
+        f"ideal mean {_fmt_error(_nanmean([item.ideal.localization_error for item in comparisons]))} "
+        f"median {_fmt_error(_nanmedian([item.ideal.localization_error for item in comparisons]))}; "
+        f"attenuated mean {_fmt_error(_nanmean([item.attenuated.localization_error for item in comparisons]))} "
+        f"median {_fmt_error(_nanmedian([item.attenuated.localization_error for item in comparisons]))}; "
+        f"corrected mean {_fmt_error(_nanmean([item.corrected.localization_error for item in comparisons]))} "
+        f"median {_fmt_error(_nanmedian([item.corrected.localization_error for item in comparisons]))}. "
+        f"Estimates produced {produced}/{expected}. Large errors are kept."
     )
     return AttenuationStudyResult(
         mu_map=mu_map,

@@ -213,6 +213,16 @@ def test_noisy_recovery_over_several_seeds_does_not_claim_less_noise():
     ]
     assert noisier
     assert "noise" in result.message.lower()
+    corrected_errors = np.array(
+        [item.corrected.localization_error for item in result.comparisons], dtype=np.float64
+    )
+    assert corrected_errors.size == len(result.comparisons)
+    assert np.all(np.isfinite(corrected_errors))
+    assert np.isclose(result.mean_corrected_localization, float(np.mean(corrected_errors)))
+    assert np.isclose(result.median_corrected_localization, float(np.median(corrected_errors)))
+    for item in result.comparisons:
+        assert f"seed {item.seed} localization" in result.message
+    assert "median" in result.message
     # The measured list used for correction is the attenuated one: same count.
     for item in result.comparisons:
         assert item.corrected.n_coincidences == item.attenuated.n_coincidences

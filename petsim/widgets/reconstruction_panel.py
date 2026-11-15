@@ -1394,7 +1394,9 @@ class ReconstructionPanel(QFrame):
             f"{result.method.upper()} · {len(result.comparisons)} seeds · "
             f"tumor recovery {result.mean_uncorrected_recovery:.2f} → "
             f"{result.mean_corrected_recovery:.2f} · "
-            f"background CV {result.mean_ideal_cv:.2f} → {result.mean_corrected_cv:.2f}"
+            f"background CV {result.mean_ideal_cv:.2f} → {result.mean_corrected_cv:.2f} · "
+            f"loc median {result.median_corrected_localization:.3f} "
+            f"(mean {result.mean_corrected_localization:.3f})"
         )
         self._status.setToolTip(result.message)
         self._refresh_canvas()
