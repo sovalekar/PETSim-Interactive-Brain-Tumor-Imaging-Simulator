@@ -20,7 +20,8 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **7** | Done | Energy resolution, timing window, randoms, and simplified Compton scatter |
 | **8** | Done | Random coincidence correction and educational global scatter scaling |
 | **9** | Done | Workstation layout, shared dark theme, and kind badges |
-| **10** | **This release (v0.10.0)** | Single header navigation, metric cards, and a shared plot theme |
+| **10** | Done | Single header navigation, metric cards, and a shared plot theme |
+| **11** | **This release (v0.11.0)** | 511 keV attenuation and parallel-beam correction |
 
 ---
 
@@ -47,6 +48,40 @@ These captures are from the Qt offscreen build used during development. They are
 ![Workstation](docs/screenshots/workstation.png)
 
 ![Corrections](docs/screenshots/corrections.png)
+
+## Stage 11 overview
+
+Stage 11 adds optional narrow-beam attenuation at 511 keV. It does not replace the Stage 10 workstation.
+
+### Physical model
+
+Field-of-view coordinates are unchanged. A scale, 10 cm per unit radius by default, converts path length to centimeters. Soft tissue uses μ = 0.096 cm⁻¹. Both values are editable.
+
+μ is constant inside the elliptical brain silhouette and zero outside it. The tumor does not change μ. The ellipse is the transmission map a scanner would obtain from a CT or a transmission scan. The correction never reads tumor coordinates, event truth labels, or the activity image.
+
+A photon that travels a tissue distance L (cm) is kept with probability
+
+\[
+e^{-\mu L}.
+\]
+
+The two photons are tested separately. For a straight line, the sum of the two tissue paths is the chord of that line of response. A photon that fails the test is not detected, so the measured coincidence list changes.
+
+### Reconstruction
+
+Each parallel-beam bin \((θ, s)\), the same coordinates as the sinogram and the projector, gets the chord through its bin center. The survival weight is \(a = \mathrm{clip}(e^{-\mu L}, 10^{-3}, 1)\).
+
+Filtered backprojection multiplies the measured bin by \(1/a\), then uses the existing smooth and ramp. Bins that recorded zero stay zero. This raises the expected value of the surviving counts and also raises their variance. It does not put the absorbed photons back. It is a simplified parallel-beam weight, not a clinical PET attenuation correction.
+
+MLEM keeps the measured counts. The forward projection is multiplied by \(a\), and the sensitivity image is the backprojection of \(a\). The same weight is not also applied to the counts. With attenuation off, \(a = 1\) and both algorithms match the previous reconstruction.
+
+### Run a comparison
+
+Open **Attenuation** in the simulation controls, turn on tissue attenuation, and choose **Compare attenuation**. The reconstruction view shows the μ map, an ideal reconstruction, the attenuated reconstruction, and the corrected reconstruction from the same emissions. The status line reports the change in tumor-mean recovery and the change in background coefficient of variation. Recovery is quantitative accuracy. The coefficient of variation is noise.
+
+### Limitations
+
+The head is a uniform ellipse, not a CT. The sinogram weight uses the bin-center ray, not a crystal-pair matrix. The survival floor limits amplification on the longest chords. Random coincidences inserted at the detector are not given a tissue path. No time-of-flight information is used.
 
 ## Stage 10 overview
 
@@ -463,7 +498,7 @@ coincidence-count comparison, analysis invalidation, and Stage 2–3 regression 
 
 - Educational model only — not clinically accurate or validated for patient imaging  
 - Coarse 48-detector geometry + finite counts → residual streaks and localization scatter  
-- No attenuation correction, scatter, randoms, or iterative methods (OSEM / ML-EM)  
+- Attenuation is a uniform ellipse and a parallel-beam bin weight, not a clinical correction  
 - ROI geometry uses phantom ground truth for evaluation; localization estimates do not  
 - Count-comparison curves are single-realization nested prefixes — not ensemble averages  
 - Very low counts remain noisy; prefer ≥5k coincidences for stable demos  

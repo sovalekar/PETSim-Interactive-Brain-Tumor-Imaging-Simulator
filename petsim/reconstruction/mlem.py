@@ -13,8 +13,10 @@ The algorithm does **not** use phantom or tumor coordinates.
 Assumptions
 -----------
 * Poisson counts in the binned parallel-beam sinogram.
-* No attenuation, scatter, randoms, or detector-efficiency weights beyond the
-  geometric projector (those effects are also absent from acquisition).
+* Optional per-bin survival ``a_i`` multiplies the geometric projector in the
+  forward model and in the sensitivity image. When ``a`` is omitted, the
+  update is the geometric projector only. Do not also pre-scale ``y`` by
+  ``1/a``; that would apply attenuation twice.
 * MLEM is applied to the **unsmoothed** measured sinogram. FBP may still
   pre-smooth; that smoothing is not part of the MLEM likelihood.
 * Pixels with zero sensitivity are left at 0 and are not updated.
@@ -77,6 +79,7 @@ def mlem_reconstruct(
     fov: float = 1.0,
     progress: ProgressCallback | None = None,
     cancel: CancelCallback | None = None,
+    survival: np.ndarray | None = None,
 ) -> tuple[np.ndarray, MLEMHistory, bool]:
     """Run MLEM. Returns ``(image, history, cancelled)``.
 
@@ -97,7 +100,15 @@ def mlem_reconstruct(
         )
         return np.zeros((max(n, 0), max(n, 0)), dtype=np.float64), empty, False
 
-    sens = sensitivity_map(thetas, s_centers, image_size=n, fov=fov)
+    # ``survival`` is the diagonal attenuation weight a_i. None keeps the
+    # original geometric sensitivity, with no extra multiply by ones.
+    weights = None if survival is None else np.asarray(survival, dtype=np.float64)
+    if weights is None:
+        sens = sensitivity_map(thetas, s_centers, image_size=n, fov=fov)
+    else:
+        if weights.shape != y.shape:
+            raise ValueError("MLEM survival must match the sinogram shape")
+        sens = backproject(weights, thetas, s_centers, image_size=n, fov=fov)
     support = sens > 0.0
     image = np.zeros((n, n), dtype=np.float64)
     image[support] = 1.0
@@ -112,12 +123,14 @@ def mlem_reconstruct(
             cancelled = True
             break
         previous = image
-        y_hat = forward_project(previous, thetas, s_centers, fov=fov)
+        projected = forward_project(previous, thetas, s_centers, fov=fov)
+        y_hat = projected if weights is None else weights * projected
         ratio = np.zeros_like(y)
         predictable = y_hat > 0.0
         ratio[predictable] = y[predictable] / y_hat[predictable]
+        adjoint_input = ratio if weights is None else weights * ratio
         correction = backproject(
-            ratio, thetas, s_centers, image_size=n, fov=fov
+            adjoint_input, thetas, s_centers, image_size=n, fov=fov
         )
         updated = np.zeros_like(previous)
         updated[support] = previous[support] * (correction[support] / sens[support])
@@ -128,7 +141,10 @@ def mlem_reconstruct(
         rel = float(np.linalg.norm(updated - previous) / denom) if denom > 0.0 else 0.0
         image = updated
         # Likelihood of the updated estimate (one extra forward projection).
-        y_hat_updated = forward_project(image, thetas, s_centers, fov=fov)
+        projected_updated = forward_project(image, thetas, s_centers, fov=fov)
+        y_hat_updated = (
+            projected_updated if weights is None else weights * projected_updated
+        )
         ll = poisson_log_likelihood(y, y_hat_updated)
         iterations.append(k)
         likelihoods.append(ll)

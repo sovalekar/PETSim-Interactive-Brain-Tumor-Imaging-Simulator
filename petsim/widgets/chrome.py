@@ -52,6 +52,12 @@ events sit on top of the unscattered lines.</p>
 photopeak prompts are scattered. Every remaining bin is multiplied by that one
 fraction. This is a total, not a map of where scatter sits, and it does not
 remove individual events.</p>
+<p><b>Attenuation.</b> Each 511 keV photon may be absorbed along its path through
+the brain ellipse. The correction uses that ellipse as a transmission map.
+It does not use the tumor. Filtered backprojection reweights the parallel-beam
+sinogram. MLEM puts the same weight in the forward model and the sensitivity
+image, not in both places. Absorbed photons are not put back, so the corrected
+image can be noisier.</p>
 <p><b>Filtered backprojection.</b> The sinogram is filtered and smeared back
 across the image. The ramp keeps high frequencies. Hann rolls them off.</p>
 <p><b>MLEM.</b> Maximum-likelihood expectation maximization updates a nonnegative

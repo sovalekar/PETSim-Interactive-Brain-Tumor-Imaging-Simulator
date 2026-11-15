@@ -192,6 +192,41 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
 
         self.draw_idle()
 
+    def show_attenuation_study(self, result, colormap: str) -> None:
+        """Map, ideal, attenuated, and corrected images for one algorithm."""
+        self._figure.clear()
+        panels = (
+            (result.mu_map, "Attenuation map (cm⁻¹)", "viridis", False),
+            (result.ideal_image, "Ideal, no attenuation", colormap, True),
+            (result.attenuated_image, "Attenuated, uncorrected", colormap, True),
+            (result.corrected_image, "Corrected", colormap, True),
+        )
+        recon_values = np.concatenate(
+            [
+                np.maximum(np.asarray(image, dtype=np.float64), 0.0).ravel()
+                for image, _, _, is_recon in panels
+                if is_recon
+            ]
+        )
+        positive = recon_values[recon_values > 0.0]
+        shared = float(np.percentile(positive, 99.5)) if positive.size else 1.0
+        shared = max(shared, 1e-12)
+        for index, (image, title, cmap, is_recon) in enumerate(panels, start=1):
+            ax = self._figure.add_subplot(2, 2, index)
+            self._style_axis(ax)
+            data = np.asarray(image, dtype=np.float64)
+            if is_recon:
+                data = np.maximum(data, 0.0)
+                vmax = shared
+            else:
+                vmax = max(float(np.max(data)) if data.size else 1.0, 1e-6)
+            ax.imshow(data, origin="lower", cmap=cmap, vmin=0.0, vmax=vmax, interpolation="nearest")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(title, fontsize=8, color=COLORS["text"], pad=2)
+        self._figure.tight_layout(pad=0.35)
+        self.draw_idle()
+
     def _draw_image(
         self,
         result: ReconstructionResult,
@@ -676,6 +711,7 @@ class ReconstructionPanel(QFrame):
         self._phantom: np.ndarray | None = None
         self._analysis: QuantitativeAnalysisResult | None = None
         self._comparison: CountComparisonResult | None = None
+        self._attenuation_study = None
         self._live_iterations: list[int] = []
         self._live_likelihood: list[float] = []
         self._live_change: list[float] = []
@@ -751,7 +787,7 @@ class ReconstructionPanel(QFrame):
         )
         self._display.setMinimumContentsLength(8)
         self._display.addItems(
-            ["Reconstructed Image", "Sinogram", "Comparison", "FBP vs MLEM"]
+            ["Reconstructed Image", "Sinogram", "Comparison", "FBP vs MLEM", "Attenuation study"]
         )
         self._display.currentTextChanged.connect(self._refresh_canvas)
         row.addWidget(self._display, stretch=2)
@@ -1348,9 +1384,36 @@ class ReconstructionPanel(QFrame):
         if self._display.currentText().lower().startswith("fbp vs"):
             self._refresh_canvas()
 
+    def show_attenuation_study(self, result) -> None:
+        """Store a paired comparison and show the four-panel view."""
+        self._attenuation_study = result
+        index = self._display.findText("Attenuation study")
+        if index >= 0:
+            self._display.setCurrentIndex(index)
+        self._status.setText(
+            f"{result.method.upper()} · {len(result.comparisons)} seeds · "
+            f"tumor recovery {result.mean_uncorrected_recovery:.2f} → "
+            f"{result.mean_corrected_recovery:.2f} · "
+            f"background CV {result.mean_ideal_cv:.2f} → {result.mean_corrected_cv:.2f}"
+        )
+        self._status.setToolTip(result.message)
+        self._refresh_canvas()
+
     def _refresh_canvas(self, *_args) -> None:
         """Redraw only the reconstruction canvas (colormap, display mode, ROIs)."""
         mode = self._display.currentText()
+        if mode.lower().startswith("attenuation"):
+            if self._attenuation_study is None:
+                self.canvas._show_placeholder(
+                    "Choose Compare attenuation.\n\n"
+                    "The view shows the μ map, the ideal image, the attenuated image, "
+                    "and the corrected image."
+                )
+            else:
+                self.canvas.show_attenuation_study(
+                    self._attenuation_study, self._cmap.currentText()
+                )
+            return
         if mode.lower().startswith("fbp vs"):
             fbp = self._fbp_result
             mlem = self._mlem_result

@@ -26,6 +26,7 @@ from petsim.widgets.chrome import show_guide
 
 from petsim import __version__
 from petsim.acquisition_controller import AcquisitionController
+from petsim.attenuation_worker import AttenuationStudyRunner
 from petsim.experiment_worker import ExperimentRunner
 from petsim.analysis.pipeline import analyze_reconstruction
 from petsim.analysis_worker import AnalysisRunner
@@ -79,6 +80,7 @@ class MainWindow(QMainWindow):
         self.physics_runner = PhysicsComparisonRunner(self)
         self.correction_runner = CorrectionComparisonRunner(self)
         self.correction_study_runner = CorrectionStudyRunner(self)
+        self.attenuation_runner = AttenuationStudyRunner(self)
         self._last_physics_draw = 0.0
 
         self._build_menu()
@@ -232,6 +234,8 @@ class MainWindow(QMainWindow):
         self.controls.state_changed.connect(self._on_phantom_changed)
         self.controls.display_changed.connect(self._on_display_changed)
         self.controls.acquisition_config_changed.connect(self._on_acq_config)
+        self.controls.attenuation_changed.connect(self.acquisition.apply_attenuation)
+        self.controls.attenuation_study_requested.connect(self._on_attenuation_study)
         self.controls.start_acquisition.connect(self._on_start)
         self.controls.pause_acquisition.connect(self.acquisition.pause)
         self.controls.reset_acquisition.connect(self._on_reset_acq)
@@ -255,6 +259,8 @@ class MainWindow(QMainWindow):
         self.recon_runner.pair_finished.connect(self._on_pair_finished)
         self.recon_runner.failed.connect(self._on_recon_failed)
         self.recon_runner.progress.connect(self._on_mlem_progress)
+        self.attenuation_runner.finished.connect(self._on_attenuation_study_finished)
+        self.attenuation_runner.failed.connect(self._on_attenuation_study_failed)
 
         self.analysis_runner.analysis_finished.connect(self._on_analysis_finished)
         self.analysis_runner.analysis_failed.connect(self._on_analysis_failed)
@@ -520,7 +526,12 @@ class MainWindow(QMainWindow):
             return
         # Ensure comparison uses the activity map tied to this acquisition.
         self.reconstruction.set_acquired_phantom(self.acquisition.acquired_activity)
-        ok = self.recon_runner.start(hits_a, hits_b, config)
+        ok = self.recon_runner.start(
+            hits_a,
+            hits_b,
+            config,
+            attenuation=self.acquisition.active_attenuation(),
+        )
         if not ok:
             self.reconstruction.show_error("Reconstruction already in progress.")
             return
@@ -555,6 +566,7 @@ class MainWindow(QMainWindow):
             fbp_config,
             pair=True,
             mlem_config=mlem_config,
+            attenuation=self.acquisition.active_attenuation(),
         )
         if not ok:
             self.reconstruction.show_error("Reconstruction already in progress.")
@@ -672,6 +684,37 @@ class MainWindow(QMainWindow):
         self.experiments.show_error(message)
         self._note(f"Experiment failed: {message}")
 
+    def _on_attenuation_study(self) -> None:
+        config = self.controls.attenuation_config()
+        if not config.enabled or config.mu_per_cm <= 0.0:
+            self._note("Enable tissue attenuation before comparing the correction.")
+            return
+        method = "mlem" if self.reconstruction._is_mlem() else "fbp"
+        seed = self.controls.study_seed()
+        ok = self.attenuation_runner.start(
+            self.controls.current_state(),
+            config,
+            method=method,
+            seeds=(seed, seed + 1),
+        )
+        if not ok:
+            self._note("An attenuation comparison is already running.")
+            return
+        self.controls.set_study_busy(True)
+        self._note(
+            f"Comparing ideal, attenuated, and corrected {method.upper()} "
+            f"on seeds {seed} and {seed + 1}…"
+        )
+
+    def _on_attenuation_study_finished(self, result) -> None:
+        self.controls.set_study_busy(False)
+        self.reconstruction.show_attenuation_study(result)
+        self._note(result.message)
+
+    def _on_attenuation_study_failed(self, message: str) -> None:
+        self.controls.set_study_busy(False)
+        self._note(f"Attenuation comparison failed: {message}")
+
     def _on_clear_reconstruction(self) -> None:
         self.recon_runner.invalidate_pending()
         self._note("Reconstruction output cleared.")
@@ -685,6 +728,7 @@ class MainWindow(QMainWindow):
         self.physics_runner.shutdown(timeout_ms=10_000)
         self.correction_runner.shutdown(timeout_ms=10_000)
         self.correction_study_runner.shutdown(timeout_ms=10_000)
+        self.attenuation_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
     def _toggle_detector_labels(self) -> None:
