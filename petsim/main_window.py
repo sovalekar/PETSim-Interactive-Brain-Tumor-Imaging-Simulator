@@ -24,10 +24,12 @@ from petsim.analysis.pipeline import analyze_reconstruction
 from petsim.analysis_worker import AnalysisRunner
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
+from petsim.corrections_worker import CorrectionComparisonRunner, CorrectionStudyRunner
 from petsim.physics_comparison_worker import PhysicsComparisonRunner
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
 from petsim.reconstruction_worker import ReconstructionRunner
 from petsim.widgets.controls_panel import ControlsPanel
+from petsim.widgets.corrections_panel import CorrectionsPanel
 from petsim.widgets.detector_physics_panel import DetectorPhysicsPanel
 from petsim.widgets.experiment_panel import ExperimentPanel
 from petsim.widgets.detector_view import DetectorView
@@ -50,6 +52,8 @@ class MainWindow(QMainWindow):
         self.analysis_runner = AnalysisRunner(self)
         self.experiment_runner = ExperimentRunner(self)
         self.physics_runner = PhysicsComparisonRunner(self)
+        self.correction_runner = CorrectionComparisonRunner(self)
+        self.correction_study_runner = CorrectionStudyRunner(self)
         self._last_physics_draw = 0.0
 
         self._build_menu()
@@ -117,9 +121,11 @@ class MainWindow(QMainWindow):
 
         self.experiments = ExperimentPanel()
         self.detector_physics = DetectorPhysicsPanel()
+        self.corrections = CorrectionsPanel()
         self.tabs = QTabWidget()
         self.tabs.addTab(workstation, "Workstation")
         self.tabs.addTab(self.detector_physics, "Detector Physics")
+        self.tabs.addTab(self.corrections, "PET Corrections & Validation")
         self.tabs.addTab(self.experiments, "Image Quality Experiments")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         outer.addWidget(self.tabs, stretch=1)
@@ -174,6 +180,21 @@ class MainWindow(QMainWindow):
         self.physics_runner.failed.connect(self.detector_physics.show_comparison_message)
         self.acquisition.apply_detector_physics(self.detector_physics.current_config())
         self.experiments.set_detector_physics(self.detector_physics.current_config())
+
+        self.corrections.compare_requested.connect(self._on_compare_corrections)
+        self.corrections.cancel_compare_requested.connect(self.correction_runner.cancel)
+        self.corrections.study_requested.connect(self._on_start_correction_study)
+        self.corrections.cancel_study_requested.connect(self.correction_study_runner.cancel)
+        self.correction_runner.finished.connect(self._on_corrections_finished)
+        self.correction_runner.failed.connect(self.corrections.show_comparison_message)
+        self.correction_runner.progress.connect(
+            lambda done, total, message: self.corrections.show_comparison_busy(
+                f"Reconstructing {message} ({done + 1}/{total})…"
+            )
+        )
+        self.correction_study_runner.finished.connect(self.corrections.show_study_result)
+        self.correction_study_runner.failed.connect(self.corrections.show_study_error)
+        self.correction_study_runner.progress.connect(self.corrections.show_study_progress)
 
     def _refresh_detector(self, state: PhantomState | None = None) -> None:
         state = state or self.controls.current_state()
@@ -241,6 +262,8 @@ class MainWindow(QMainWindow):
         self.physics_runner.invalidate_pending()
         self.reconstruction.invalidate("New acquisition started.")
         self.detector_physics.clear_visuals()
+        self.correction_runner.invalidate_pending()
+        self.corrections.clear_comparison()
         self.acquisition.apply_config(self.controls.acquisition_config())
         self.acquisition.start()
         self.controls.set_acquisition_controls_enabled(False)
@@ -270,6 +293,66 @@ class MainWindow(QMainWindow):
             f"Reconstructing ideal and degraded data with {config.method.upper()}…"
         )
 
+    def _on_compare_corrections(self) -> None:
+        degraded_a, degraded_b = self.acquisition.coincidence_endpoints()
+        ideal_a, ideal_b = self.acquisition.ideal_coincidence_endpoints()
+        if degraded_a.shape[0] == 0 and ideal_a.shape[0] == 0:
+            self.corrections.show_comparison_message(
+                "Acquire coincidences before comparing corrections."
+            )
+            return
+        physics = self.acquisition.active_detector_physics()
+        fraction = physics.random_fraction if physics.enabled else 0.0
+        scatter_probability = physics.scatter_probability if physics.enabled else 0.0
+        config = ReconstructionConfig(
+            method=self.corrections.comparison_method(),
+            n_iterations=self.corrections.comparison_iterations(),
+            image_size=64,
+            n_theta=48,
+            n_s=64,
+            filter_name="hann",
+            smooth_sigma_s=1.0,
+            smooth_sigma_theta=0.5,
+        ).clamp()
+        started = self.correction_runner.start(
+            ideal_a,
+            ideal_b,
+            degraded_a,
+            degraded_b,
+            config,
+            n_annihilations=self.acquisition.annihilation_count(),
+            random_fraction=fraction,
+            phantom=self.acquisition.acquired_phantom_state,
+            n_side_window=self.acquisition.side_window_count(),
+            scatter_probability=scatter_probability,
+            photo_low_kev=physics.energy_window_low_kev,
+            photo_high_kev=physics.energy_window_high_kev,
+            energy_fwhm_percent=physics.energy_fwhm_percent,
+            scatter_angle_sigma_rad=physics.scatter_angle_sigma_rad,
+        )
+        if not started:
+            self.corrections.show_comparison_message("A correction comparison is already running.")
+            return
+        self.corrections.show_comparison_busy(
+            f"Reconstructing five {config.method.upper()} images from this acquisition…"
+        )
+
+    def _on_corrections_finished(self, bundle) -> None:
+        try:
+            self.corrections.show_comparison(bundle)
+        except Exception as exc:  # noqa: BLE001
+            self.corrections.show_comparison_message(f"Could not display the comparison: {exc}")
+
+    def _on_start_correction_study(self) -> None:
+        config = self.corrections.build_study_config(self.controls.current_state())
+        if config is None:
+            self.corrections.show_study_error("Select at least one random probability and one scatter probability.")
+            return
+        if not self.correction_study_runner.start(config):
+            self.corrections.show_study_error("A correction study is already running.")
+            return
+        self.corrections.show_study_progress(0, 1, "Starting matched correction study…")
+
     def _on_physics_comparison_finished(self, result) -> None:
         try:
             self.detector_physics.show_comparison(result.ideal, result.degraded)
@@ -291,6 +374,8 @@ class MainWindow(QMainWindow):
         self.reconstruction.invalidate("Acquisition data cleared.")
         self.detector_physics.clear_visuals()
         self.detector_physics.update_stats(self.acquisition.stats, np.zeros(0))
+        self.correction_runner.invalidate_pending()
+        self.corrections.clear_comparison()
 
     def _on_stats(self, stats: AcquisitionStats) -> None:
         self.controls.update_stats(stats)
@@ -489,6 +574,8 @@ class MainWindow(QMainWindow):
         self.analysis_runner.shutdown(timeout_ms=10_000)
         self.experiment_runner.shutdown(timeout_ms=10_000)
         self.physics_runner.shutdown(timeout_ms=10_000)
+        self.correction_runner.shutdown(timeout_ms=10_000)
+        self.correction_study_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
     def _reset_splitter(self) -> None:
@@ -509,7 +596,8 @@ class MainWindow(QMainWindow):
                 "<b>Stage 4:</b> localization, contrast / TBR, count comparison.<br>"
                 "<b>Stage 5:</b> MLEM iterative reconstruction vs FBP.<br>"
                 "<b>Stage 6:</b> repeated image-quality experiments.<br>"
-                "<b>Stage 7:</b> optional energy, timing, randoms, and simplified scatter.<br><br>"
+                "<b>Stage 7:</b> optional energy, timing, randoms, and simplified scatter.<br>"
+                "<b>Stage 8:</b> random coincidence correction and global scatter scaling.<br><br>"
                 "Detector effects are off unless you enable them.<br>"
                 "Not a clinical diagnostic tool."
             ),

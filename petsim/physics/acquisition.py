@@ -100,6 +100,7 @@ class AcquisitionBuffer:
     ideal_hits_b: list[tuple[float, float]] = field(default_factory=list)
     energy_a_kev: list[float] = field(default_factory=list)
     energy_b_kev: list[float] = field(default_factory=list)
+    passed_timing: list[bool] = field(default_factory=list)
     is_random: list[bool] = field(default_factory=list)
     is_scattered: list[bool] = field(default_factory=list)
 
@@ -117,6 +118,7 @@ class AcquisitionBuffer:
         self.ideal_hits_b.clear()
         self.energy_a_kev.clear()
         self.energy_b_kev.clear()
+        self.passed_timing.clear()
         self.is_random.clear()
         self.is_scattered.clear()
 
@@ -146,6 +148,7 @@ class AcquisitionBuffer:
             self.ideal_hits_b.append(ideal_b)
             self.energy_a_kev.append(float(ev.energy_a_kev))
             self.energy_b_kev.append(float(ev.energy_b_kev))
+            self.passed_timing.append(bool(ev.passed_timing))
             self.is_random.append(bool(ev.is_random))
             self.is_scattered.append(bool(ev.is_scattered))
             is_coin = ev.is_coincidence
@@ -222,6 +225,27 @@ class AcquisitionBuffer:
         return (
             np.asarray(pts_a, dtype=np.float64),
             np.asarray(pts_b, dtype=np.float64),
+        )
+
+    def side_window_count(
+        self,
+        photo_low_kev: float,
+        photo_high_kev: float,
+        *,
+        limit: int | None = None,
+    ) -> int:
+        """Witness pairs for scatter transfer. Event labels are not read."""
+        from petsim.corrections.energy import count_side_window_coincidences
+
+        return count_side_window_coincidences(
+            self.energy_a_kev,
+            self.energy_b_kev,
+            self.detected_a,
+            self.detected_b,
+            self.passed_timing,
+            photo_low_kev=photo_low_kev,
+            photo_high_kev=photo_high_kev,
+            limit=limit,
         )
 
     def measured_photon_energies_kev(self) -> np.ndarray:

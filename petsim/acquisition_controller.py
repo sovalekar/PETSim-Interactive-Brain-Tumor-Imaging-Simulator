@@ -154,6 +154,26 @@ class AcquisitionController(QObject):
     def measured_photon_energies_kev(self) -> np.ndarray:
         return self.buffer.measured_photon_energies_kev()
 
+    def annihilation_count(self) -> int:
+        """Annihilations stored for the current acquisition, excluding random records."""
+        return self.buffer.n_annihilations()
+
+    def side_window_count(self) -> int:
+        """Lower-window witness pairs for the active photopeak, or 0 if effects are off."""
+        physics = self.active_detector_physics()
+        if not physics.enabled:
+            return 0
+        return self.buffer.side_window_count(
+            physics.energy_window_low_kev,
+            physics.energy_window_high_kev,
+        )
+
+    def active_detector_physics(self) -> DetectorPhysicsConfig:
+        """Physics snapshot for the current buffer, or disabled if none was started."""
+        if self._active_physics is not None:
+            return self._active_physics
+        return DetectorPhysicsConfig(enabled=False)
+
     def _on_tick(self) -> None:
         if self._stats.paused or not self._stats.running:
             return

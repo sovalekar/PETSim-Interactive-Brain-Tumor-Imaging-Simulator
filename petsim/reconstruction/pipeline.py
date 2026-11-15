@@ -82,6 +82,8 @@ class ReconstructionResult:
     history: MLEMHistory | None = None
     cancelled: bool = False
     job_id: int = 0
+    random_estimate_counts: float = 0.0
+    scatter_estimate_counts: float = 0.0
 
     @property
     def image_display(self) -> np.ndarray:
