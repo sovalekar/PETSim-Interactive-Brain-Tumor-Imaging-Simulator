@@ -227,6 +227,30 @@ class ReconstructionCanvas(FigureCanvasQTAgg):
         self._figure.tight_layout(pad=0.35)
         self.draw_idle()
 
+    def show_tof_study(self, result, colormap: str) -> None:
+        """Conventional MLEM and TOF-MLEM from the same coincidences."""
+        self._figure.clear()
+        panels = (
+            (result.conventional_image, "Conventional MLEM"),
+            (result.tof_image, "TOF-MLEM"),
+        )
+        values = np.concatenate(
+            [np.maximum(np.asarray(image, dtype=np.float64), 0.0).ravel() for image, _ in panels]
+        )
+        positive = values[values > 0.0]
+        shared = float(np.percentile(positive, 99.5)) if positive.size else 1.0
+        shared = max(shared, 1e-12)
+        for index, (image, title) in enumerate(panels, start=1):
+            ax = self._figure.add_subplot(1, 2, index)
+            self._style_axis(ax)
+            data = np.maximum(np.asarray(image, dtype=np.float64), 0.0)
+            ax.imshow(data, origin="lower", cmap=colormap, vmin=0.0, vmax=shared, interpolation="nearest")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(title, fontsize=9, color=COLORS["text"], pad=2)
+        self._figure.tight_layout(pad=0.4)
+        self.draw_idle()
+
     def _draw_image(
         self,
         result: ReconstructionResult,
@@ -712,6 +736,7 @@ class ReconstructionPanel(QFrame):
         self._analysis: QuantitativeAnalysisResult | None = None
         self._comparison: CountComparisonResult | None = None
         self._attenuation_study = None
+        self._tof_study = None
         self._live_iterations: list[int] = []
         self._live_likelihood: list[float] = []
         self._live_change: list[float] = []
@@ -787,7 +812,7 @@ class ReconstructionPanel(QFrame):
         )
         self._display.setMinimumContentsLength(8)
         self._display.addItems(
-            ["Reconstructed Image", "Sinogram", "Comparison", "FBP vs MLEM", "Attenuation study"]
+            ["Reconstructed Image", "Sinogram", "Comparison", "FBP vs MLEM", "Attenuation study", "TOF study"]
         )
         self._display.currentTextChanged.connect(self._refresh_canvas)
         row.addWidget(self._display, stretch=2)
@@ -1401,9 +1426,35 @@ class ReconstructionPanel(QFrame):
         self._status.setToolTip(result.message)
         self._refresh_canvas()
 
+    def show_tof_study(self, result) -> None:
+        """Store the matched comparison and show both images."""
+        self._tof_study = result
+        index = self._display.findText("TOF study")
+        if index >= 0:
+            self._display.setCurrentIndex(index)
+        conventional = result.median("conventional_localization")
+        timed = result.median("tof_localization")
+        self._status.setText(
+            f"TOF-MLEM · {len(result.comparisons)} seeds · "
+            f"localization median {conventional:.3f} → {timed:.3f} · "
+            f"NRMSE {result.mean('conventional_nrmse'):.3f} → {result.mean('tof_nrmse'):.3f}"
+        )
+        self._status.setToolTip(result.message)
+        self._refresh_canvas()
+
     def _refresh_canvas(self, *_args) -> None:
         """Redraw only the reconstruction canvas (colormap, display mode, ROIs)."""
         mode = self._display.currentText()
+        if mode.lower().startswith("tof"):
+            if self._tof_study is None:
+                self.canvas._show_placeholder(
+                    "Choose Compare TOF.\n\n"
+                    "Conventional MLEM and TOF-MLEM use the same true coincidences. "
+                    "Random coincidences are excluded."
+                )
+            else:
+                self.canvas.show_tof_study(self._tof_study, self._cmap.currentText())
+            return
         if mode.lower().startswith("attenuation"):
             if self._attenuation_study is None:
                 self.canvas._show_placeholder(

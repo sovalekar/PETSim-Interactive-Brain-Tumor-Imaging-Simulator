@@ -101,6 +101,7 @@ class AcquisitionBuffer:
     energy_a_kev: list[float] = field(default_factory=list)
     energy_b_kev: list[float] = field(default_factory=list)
     passed_timing: list[bool] = field(default_factory=list)
+    measured_delta_t_ps: list[float] = field(default_factory=list)
     is_random: list[bool] = field(default_factory=list)
     is_scattered: list[bool] = field(default_factory=list)
 
@@ -119,6 +120,7 @@ class AcquisitionBuffer:
         self.energy_a_kev.clear()
         self.energy_b_kev.clear()
         self.passed_timing.clear()
+        self.measured_delta_t_ps.clear()
         self.is_random.clear()
         self.is_scattered.clear()
 
@@ -149,6 +151,7 @@ class AcquisitionBuffer:
             self.energy_a_kev.append(float(ev.energy_a_kev))
             self.energy_b_kev.append(float(ev.energy_b_kev))
             self.passed_timing.append(bool(ev.passed_timing))
+            self.measured_delta_t_ps.append(float(ev.measured_delta_t_ps))
             self.is_random.append(bool(ev.is_random))
             self.is_scattered.append(bool(ev.is_scattered))
             is_coin = ev.is_coincidence
@@ -194,6 +197,40 @@ class AcquisitionBuffer:
         return (
             np.asarray(pts_a, dtype=np.float64),
             np.asarray(pts_b, dtype=np.float64),
+        )
+
+    def true_coincidence_tof(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """True-coincidence endpoints and measured ``Δt``.
+
+        Random records are omitted. They have no annihilation time, and TOF-MLEM
+        does not treat a flat clock as a true TOF kernel.
+        """
+        pts_a = []
+        pts_b = []
+        times = []
+        for ha, hb, ok, is_random, delta_t in zip(
+            self.hits_a,
+            self.hits_b,
+            self.coincidence_flags,
+            self.is_random,
+            self.measured_delta_t_ps,
+            strict=True,
+        ):
+            if not ok or is_random:
+                continue
+            pts_a.append(ha)
+            pts_b.append(hb)
+            times.append(delta_t)
+        if not pts_a:
+            return (
+                np.zeros((0, 2), dtype=np.float64),
+                np.zeros((0, 2), dtype=np.float64),
+                np.zeros(0, dtype=np.float64),
+            )
+        return (
+            np.asarray(pts_a, dtype=np.float64),
+            np.asarray(pts_b, dtype=np.float64),
+            np.asarray(times, dtype=np.float64),
         )
 
     def ideal_coincidence_endpoints(self) -> tuple[np.ndarray, np.ndarray]:

@@ -183,6 +183,7 @@ class PETEngine:
         detector_efficiency: float = 0.8,
         physics: object | None = None,
         attenuation: object | None = None,
+        tof: object | None = None,
     ) -> list[AnnihilationEvent]:
         """Simulate ``n_events`` annihilations and return per-event records.
 
@@ -201,6 +202,11 @@ class PETEngine:
             Optional ``AttenuationConfig``. Inactive or missing attenuation
             does not draw random numbers. An active config absorbs each photon
             with probability ``1 - exp(-μ L)`` after the efficiency draw.
+        tof :
+            Optional ``TOFConfig``. Inactive or missing TOF does not draw
+            random numbers. An active config records ``t_A - t_B`` after the
+            attenuation draws, and only when detector physics is off so the
+            Stage 7 timing stream stays unchanged.
         """
         eps = float(np.clip(detector_efficiency, 0.0, 1.0))
         if n_events <= 0:
@@ -239,6 +245,27 @@ class PETEngine:
             detected_a = detected_a & (self.rng.random(n_events) < prob_a)
             detected_b = detected_b & (self.rng.random(n_events) < prob_b)
 
+        # TOF timing is drawn only when detector physics is off. Stage 7 owns
+        # the clock, and its 15 cm ring, whenever that model is enabled.
+        flight_ps = np.zeros(n_events, dtype=np.float64)
+        residual_ps = np.zeros(n_events, dtype=np.float64)
+        physics_on = physics is not None and getattr(physics, "enabled", False)
+        tof_cfg = tof.clamp() if hasattr(tof, "clamp") else tof
+        if (
+            tof_cfg is not None
+            and getattr(tof_cfg, "active", False)
+            and not physics_on
+        ):
+            from petsim.physics.detector_effects import fwhm_to_sigma
+            from petsim.physics.tof import flight_time_difference_ps
+
+            path_a = np.linalg.norm(hit_a - origins, axis=1)
+            path_b = np.linalg.norm(hit_b - origins, axis=1)
+            flight_ps = flight_time_difference_ps(path_a, path_b, float(tof_cfg.cm_per_fov))
+            sigma_ps = fwhm_to_sigma(float(tof_cfg.fwhm_ps))
+            if sigma_ps > 0.0:
+                residual_ps = self.rng.normal(0.0, sigma_ps, size=n_events)
+
         events: list[AnnihilationEvent] = []
         for i in range(n_events):
             events.append(
@@ -252,6 +279,9 @@ class PETEngine:
                     detected_a=bool(detected_a[i]),
                     detected_b=bool(detected_b[i]),
                     energy_kev=PHOTON_ENERGY_KEV,
+                    flight_time_difference_ps=float(flight_ps[i]),
+                    timing_residual_ps=float(residual_ps[i]),
+                    measured_delta_t_ps=float(flight_ps[i] + residual_ps[i]),
                 )
             )
         if physics is not None and getattr(physics, "enabled", False):

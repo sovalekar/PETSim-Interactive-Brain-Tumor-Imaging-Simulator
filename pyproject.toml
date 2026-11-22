@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "petsim"
-version = "0.11.0"
-description = "Interactive PET brain-tumor imaging simulator (Stage 11 attenuation)"
+version = "0.12.0"
+description = "Interactive PET brain-tumor imaging simulator (Stage 12 time of flight)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
