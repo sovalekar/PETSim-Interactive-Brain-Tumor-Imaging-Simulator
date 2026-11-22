@@ -18,6 +18,7 @@ from petsim.physics.acquisition import (
     AcquisitionStats,
 )
 from petsim.physics.attenuation import AttenuationConfig
+from petsim.physics.tof import TOFConfig
 from petsim.physics.detector_effects import DetectorPhysicsConfig, account_events
 from petsim.physics.pet_engine import AnnihilationEvent, PETEngine
 
@@ -40,9 +41,11 @@ class AcquisitionController(QObject):
         self.config = AcquisitionConfig().clamp()
         self.physics = DetectorPhysicsConfig()
         self.attenuation = AttenuationConfig()
+        self.tof = TOFConfig()
         # Frozen copies used by the acquisition currently in the buffer.
         self._active_physics: DetectorPhysicsConfig | None = None
         self._active_attenuation: AttenuationConfig | None = None
+        self._active_tof: TOFConfig | None = None
         # Snapshot of the uptake map used for the current acquisition (Stage 3
         # comparison). Cleared on reset; never used as a reconstruction input.
         self.acquired_activity: np.ndarray | None = None
@@ -95,6 +98,22 @@ class AcquisitionController(QObject):
         if self._stats.total_events > 0 or self._stats.running:
             self.reset()
 
+    def apply_tof(self, config: TOFConfig) -> None:
+        """Store timing settings. A change clears the buffer so Δt matches one model."""
+        updated = config.clamp()
+        updated = TOFConfig(
+            enabled=updated.enabled,
+            fwhm_ps=updated.fwhm_ps,
+            cm_per_fov=updated.cm_per_fov,
+            n_t=updated.n_t,
+            t_max=updated.t_max,
+        )
+        if updated == self.tof:
+            return
+        self.tof = updated
+        if self._stats.total_events > 0 or self._stats.running:
+            self.reset()
+
     def apply_detector_physics(self, config: DetectorPhysicsConfig) -> None:
         """Store settings for the next acquisition.
 
@@ -133,6 +152,13 @@ class AcquisitionController(QObject):
                 brain_radius=self.phantom.state.clamp().brain_radius,
                 a_min=self.attenuation.a_min,
             ).clamp()
+            self._active_tof = TOFConfig(
+                enabled=self.tof.enabled,
+                fwhm_ps=self.tof.fwhm_ps,
+                cm_per_fov=self.attenuation.cm_per_fov,
+                n_t=self.tof.n_t,
+                t_max=self.tof.t_max,
+            ).clamp()
             self._stats.effects_enabled = self._active_physics.enabled
 
         self._stats.running = True
@@ -163,6 +189,7 @@ class AcquisitionController(QObject):
         self.acquired_phantom_state = None
         self._active_physics = None
         self._active_attenuation = None
+        self._active_tof = None
         self._stats = AcquisitionStats(
             total_events=0,
             coincidences=0,
@@ -199,6 +226,16 @@ class AcquisitionController(QObject):
             physics.energy_window_high_kev,
         )
 
+    def true_coincidence_tof(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """True coincidences and their measured time differences. Randoms are omitted."""
+        return self.buffer.true_coincidence_tof()
+
+    def active_tof(self) -> TOFConfig:
+        """TOF snapshot for the current buffer, or disabled if none was started."""
+        if self._active_tof is not None:
+            return self._active_tof
+        return TOFConfig(enabled=False)
+
     def active_attenuation(self) -> AttenuationConfig:
         """Attenuation snapshot for the current buffer, or disabled if none was started."""
         if self._active_attenuation is not None:
@@ -227,6 +264,7 @@ class AcquisitionController(QObject):
             detector_efficiency=self.config.detector_efficiency,
             physics=physics,
             attenuation=self._active_attenuation,
+            tof=self._active_tof,
         )
         n_coin = self.buffer.extend(events)
         accounted = account_events(events)

@@ -21,7 +21,8 @@ Built with **Python 3.11+**, **PySide6**, **NumPy**, and embedded **Matplotlib**
 | **8** | Done | Random coincidence correction and educational global scatter scaling |
 | **9** | Done | Workstation layout, shared dark theme, and kind badges |
 | **10** | Done | Single header navigation, metric cards, and a shared plot theme |
-| **11** | **This release (v0.11.0)** | 511 keV attenuation and parallel-beam correction |
+| **11** | Done (v0.11.0) | 511 keV attenuation and parallel-beam correction |
+| **12** | **This release (v0.12.0)** | Time-of-flight acquisition and TOF-MLEM |
 
 ---
 
@@ -48,6 +49,22 @@ These captures are from the Qt offscreen build used during development. They are
 ![Workstation](docs/screenshots/workstation.png)
 
 ![Corrections](docs/screenshots/corrections.png)
+
+## Stage 12 overview
+
+Stage 12 records an arrival-time difference on true coincidences and reconstructs them with TOF-MLEM. The switch is off by default. FBP is unchanged. With time of flight off, acquisition and reconstruction match Stage 11, including the random stream.
+
+The sign is `Δt = t_A − t_B`. A positive value means photon A traveled farther, so the annihilation is closer to B. The most likely point is the chord midpoint shifted toward B by `c Δt / 2`. Along the folded line used by the sinogram, `x = s cos θ − t sin θ` and `y = s sin θ + t cos θ`. The spatial kernel width is `σ_x = c σ_t / 2`, with `σ_t = FWHM / (2 √(2 ln 2))`. The discrete kernel is `φ(t) Δt` and is not piled onto the end bins, so probability outside the time axis lowers sensitivity there. The time axis extends to 1.45 field-of-view units so the square image is inside it.
+
+The forward model is `H = a(θ, s) · F_tof`. The chord survival `a` is the Stage 11 weight. It multiplies the forward projection once and the adjoint once. Counts are not also divided by `a`. Sensitivity is `Hᵀ 1` over every `(θ, s, t)` bin, including empty bins. It is not the sum of the kernels of the events that were detected.
+
+Random coincidences have no annihilation position. This version does not give them a Gaussian TOF kernel and does not add a random-background term. TOF-MLEM and the Compare TOF study use true coincidences only. Conventional MLEM in that comparison sees the same true events and ignores the times.
+
+The image centimeter scale is the attenuation control, 10 cm per field-of-view radius by default. Stage 7 timing acceptance still uses its 15 cm ring and is not retuned. Enabling both mixes those scales, and Stage 7 owns the clock so TOF does not draw a second residual. The comparison does not enable Stage 7.
+
+The known tumor location is not a reconstruction input. Compare TOF reports every seed's localization error, then the mean and the median. A narrower kernel tightens the timing estimate on noiseless data. A noisy seed is not required to improve NRMSE, contrast, and background CV at the same time.
+
+The numerical check of that claim is in [Stage 12 validation](docs/stage-12-validation.md). It keeps every seed. It does not change the projector.
 
 ## Stage 11 overview
 

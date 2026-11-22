@@ -32,6 +32,8 @@ class _ReconTask(QObject):
         pair: bool,
         mlem_config: ReconstructionConfig | None = None,
         attenuation=None,
+        tof=None,
+        delta_t_ps=None,
     ) -> None:
         super().__init__()
         self._hits_a = np.asarray(hits_a, dtype=np.float64)
@@ -41,6 +43,8 @@ class _ReconTask(QObject):
         self._job_id = int(job_id)
         self._pair = bool(pair)
         self._attenuation = attenuation
+        self._tof = tof
+        self._delta_t = None if delta_t_ps is None else np.asarray(delta_t_ps, dtype=np.float64)
         self._cancel = threading.Event()
 
     def request_cancel(self) -> None:
@@ -82,6 +86,8 @@ class _ReconTask(QObject):
                     self._hits_b,
                     mlem_cfg,
                     attenuation=self._attenuation,
+                    tof=self._tof,
+                    delta_t_ps=self._delta_t,
                     progress=self._progress,
                     cancel=self._cancel.is_set,
                     job_id=self._job_id,
@@ -97,6 +103,8 @@ class _ReconTask(QObject):
                 cancel=self._cancel.is_set,
                 job_id=self._job_id,
                 attenuation=self._attenuation,
+                tof=self._tof,
+                delta_t_ps=self._delta_t,
             )
             self.finished.emit(result)
         except Exception as exc:  # noqa: BLE001 — surface any recon failure to UI
@@ -136,6 +144,8 @@ class ReconstructionRunner(QObject):
         pair: bool = False,
         mlem_config: ReconstructionConfig | None = None,
         attenuation=None,
+        tof=None,
+        delta_t_ps=None,
     ) -> bool:
         if self._busy:
             return False
@@ -151,6 +161,8 @@ class ReconstructionRunner(QObject):
             pair=pair,
             mlem_config=mlem_config,
             attenuation=attenuation,
+            tof=tof,
+            delta_t_ps=delta_t_ps,
         )
         self._task.moveToThread(self._thread)
         self._thread.started.connect(self._task.run)

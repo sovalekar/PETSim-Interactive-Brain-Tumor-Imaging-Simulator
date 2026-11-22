@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from collections import deque
 
+import numpy as np
+
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Arc, Circle, Ellipse
@@ -46,6 +48,7 @@ class DetectorCanvas(FigureCanvasQTAgg):
 
         # Recent events kept for a short trail so motion is visible.
         self._recent_events: deque[AnnihilationEvent] = deque(maxlen=12)
+        self._tof_xy = np.zeros((0, 2))
         self._overlay_artists: list = []
         self._crystal_arcs: list[Arc] = []
         self._base_drawn = False
@@ -65,13 +68,23 @@ class DetectorCanvas(FigureCanvasQTAgg):
         self._show_detectors = show_detectors
         self._show_labels = show_labels
         self._recent_events.clear()
+        self._tof_xy = np.zeros((0, 2))
         self._draw_base_scene()
 
     def clear_events(self) -> None:
         self._recent_events.clear()
+        self._tof_xy = np.zeros((0, 2))
         self._clear_overlay()
         self._reset_crystal_highlights()
         self.draw_idle()
+
+    def set_tof_estimates(self, points: np.ndarray | None) -> None:
+        """Timing estimates along measured chords. Not annihilation positions."""
+        if points is None or len(points) == 0:
+            self._tof_xy = np.zeros((0, 2))
+        else:
+            self._tof_xy = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+        self._redraw_overlay()
 
     def show_events(self, events: list[AnnihilationEvent]) -> None:
         """Append a batch of simulated events and refresh the overlay only."""
@@ -345,6 +358,19 @@ class DetectorCanvas(FigureCanvasQTAgg):
                 )
                 self._overlay_artists.append(hb)
 
+        if getattr(self, "_tof_xy", None) is not None and len(self._tof_xy) > 0:
+            (marks,) = ax.plot(
+                self._tof_xy[:, 0],
+                self._tof_xy[:, 1],
+                linestyle="none",
+                marker="x",
+                markersize=5,
+                color="#7fd1c8",
+                alpha=0.9,
+                zorder=23,
+            )
+            self._overlay_artists.append(marks)
+
         self.draw_idle()
 
     def fit_view(self) -> None:
@@ -430,6 +456,9 @@ class DetectorView(QFrame):
 
     def clear_events(self) -> None:
         self.canvas.clear_events()
+
+    def set_tof_estimates(self, points: np.ndarray | None) -> None:
+        self.canvas.set_tof_estimates(points)
 
     def _export_image(self) -> None:
         path, _selected = QFileDialog.getSaveFileName(

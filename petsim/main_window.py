@@ -24,14 +24,18 @@ from PySide6.QtWidgets import (
 
 from petsim.widgets.chrome import show_guide
 
+import numpy as np
+
 from petsim import __version__
 from petsim.acquisition_controller import AcquisitionController
 from petsim.attenuation_worker import AttenuationStudyRunner
+from petsim.tof_worker import TOFStudyRunner
 from petsim.experiment_worker import ExperimentRunner
 from petsim.analysis.pipeline import analyze_reconstruction
 from petsim.analysis_worker import AnalysisRunner
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
+from petsim.physics.tof import most_likely_points
 from petsim.corrections_worker import CorrectionComparisonRunner, CorrectionStudyRunner
 from petsim.physics_comparison_worker import PhysicsComparisonRunner
 from petsim.reconstruction.pipeline import ReconstructionConfig, ReconstructionResult
@@ -81,6 +85,7 @@ class MainWindow(QMainWindow):
         self.correction_runner = CorrectionComparisonRunner(self)
         self.correction_study_runner = CorrectionStudyRunner(self)
         self.attenuation_runner = AttenuationStudyRunner(self)
+        self.tof_runner = TOFStudyRunner(self)
         self._last_physics_draw = 0.0
 
         self._build_menu()
@@ -236,11 +241,13 @@ class MainWindow(QMainWindow):
         self.controls.acquisition_config_changed.connect(self._on_acq_config)
         self.controls.attenuation_changed.connect(self.acquisition.apply_attenuation)
         self.controls.attenuation_study_requested.connect(self._on_attenuation_study)
+        self.controls.tof_changed.connect(self.acquisition.apply_tof)
+        self.controls.tof_study_requested.connect(self._on_tof_study)
         self.controls.start_acquisition.connect(self._on_start)
         self.controls.pause_acquisition.connect(self.acquisition.pause)
         self.controls.reset_acquisition.connect(self._on_reset_acq)
 
-        self.acquisition.events_simulated.connect(self.detector_view.show_events)
+        self.acquisition.events_simulated.connect(self._on_events)
         self.detector_view.labels_toggled.connect(self._toggle_detector_labels)
         self.acquisition.stats_changed.connect(self._on_stats)
         self.acquisition.finished.connect(self._on_finished)
@@ -261,6 +268,8 @@ class MainWindow(QMainWindow):
         self.recon_runner.progress.connect(self._on_mlem_progress)
         self.attenuation_runner.finished.connect(self._on_attenuation_study_finished)
         self.attenuation_runner.failed.connect(self._on_attenuation_study_failed)
+        self.tof_runner.finished.connect(self._on_tof_study_finished)
+        self.tof_runner.failed.connect(self._on_tof_study_failed)
 
         self.analysis_runner.analysis_finished.connect(self._on_analysis_finished)
         self.analysis_runner.analysis_failed.connect(self._on_analysis_failed)
@@ -517,8 +526,39 @@ class MainWindow(QMainWindow):
             f"{stats.coincidences} coincidences — ready for reconstruction."
         )
 
-    def _on_run_reconstruction(self, config: ReconstructionConfig) -> None:
+    def _coincidence_inputs(self, *, timed: bool):
+        """Endpoints for reconstruction. TOF-MLEM uses true coincidences only."""
+        if timed:
+            hits_a, hits_b, delta_t = self.acquisition.true_coincidence_tof()
+            return hits_a, hits_b, self.acquisition.active_tof(), delta_t
         hits_a, hits_b = self.acquisition.coincidence_endpoints()
+        return hits_a, hits_b, None, None
+
+    def _on_events(self, events) -> None:
+        self.detector_view.show_events(events)
+        tof = self.acquisition.active_tof()
+        physics = self.acquisition.physics
+        if not tof.active or physics.enabled:
+            self.detector_view.set_tof_estimates(None)
+            return
+        trues = [
+            event
+            for event in events
+            if event.is_coincidence and not event.is_random
+        ]
+        if not trues:
+            self.detector_view.set_tof_estimates(None)
+            return
+        hits_a = np.array([event.hit_a_xy for event in trues], dtype=np.float64)
+        hits_b = np.array([event.hit_b_xy for event in trues], dtype=np.float64)
+        delta_t = np.array([event.measured_delta_t_ps for event in trues], dtype=np.float64)
+        self.detector_view.set_tof_estimates(
+            most_likely_points(hits_a, hits_b, delta_t, tof.cm_per_fov)
+        )
+
+    def _on_run_reconstruction(self, config: ReconstructionConfig) -> None:
+        timed = config.method == "mlem" and self.acquisition.active_tof().active
+        hits_a, hits_b, tof, delta_t = self._coincidence_inputs(timed=timed)
         if hits_a.shape[0] == 0:
             self.reconstruction.show_error(
                 "Reconstruction unavailable — acquire coincidence data first."
@@ -531,6 +571,8 @@ class MainWindow(QMainWindow):
             hits_b,
             config,
             attenuation=self.acquisition.active_attenuation(),
+            tof=tof,
+            delta_t_ps=delta_t,
         )
         if not ok:
             self.reconstruction.show_error("Reconstruction already in progress.")
@@ -553,7 +595,8 @@ class MainWindow(QMainWindow):
         self._set_header_progress(done, f"MLEM {iteration}/{total}")
 
     def _on_compare_algorithms(self, fbp_config: ReconstructionConfig, mlem_config: ReconstructionConfig) -> None:
-        hits_a, hits_b = self.acquisition.coincidence_endpoints()
+        timed = self.acquisition.active_tof().active
+        hits_a, hits_b, tof, delta_t = self._coincidence_inputs(timed=timed)
         if hits_a.shape[0] == 0:
             self.reconstruction.show_error(
                 "Reconstruction unavailable — acquire coincidence data first."
@@ -567,6 +610,8 @@ class MainWindow(QMainWindow):
             pair=True,
             mlem_config=mlem_config,
             attenuation=self.acquisition.active_attenuation(),
+            tof=tof,
+            delta_t_ps=delta_t,
         )
         if not ok:
             self.reconstruction.show_error("Reconstruction already in progress.")
@@ -715,6 +760,37 @@ class MainWindow(QMainWindow):
         self.controls.set_study_busy(False)
         self._note(f"Attenuation comparison failed: {message}")
 
+    def _on_tof_study(self) -> None:
+        tof = self.controls.tof_config()
+        if not tof.enabled:
+            self._note("Enable time of flight before comparing TOF-MLEM.")
+            return
+        seed = self.controls.study_seed()
+        attenuation = self.controls.attenuation_config()
+        ok = self.tof_runner.start(
+            self.controls.current_state(),
+            tof,
+            attenuation if attenuation.active else None,
+            seeds=(seed, seed + 1),
+        )
+        if not ok:
+            self._note("A TOF comparison is already running.")
+            return
+        self.controls.set_tof_busy(True)
+        self._note(
+            f"Comparing conventional MLEM and TOF-MLEM on seeds {seed} and {seed + 1}…"
+        )
+
+    def _on_tof_study_finished(self, result) -> None:
+        self.controls.set_tof_busy(False)
+        self.reconstruction.show_tof_study(result)
+        self.detector_view.set_tof_estimates(result.estimate_xy)
+        self._note(result.message)
+
+    def _on_tof_study_failed(self, message: str) -> None:
+        self.controls.set_tof_busy(False)
+        self._note(f"TOF comparison failed: {message}")
+
     def _on_clear_reconstruction(self) -> None:
         self.recon_runner.invalidate_pending()
         self._note("Reconstruction output cleared.")
@@ -729,6 +805,7 @@ class MainWindow(QMainWindow):
         self.correction_runner.shutdown(timeout_ms=10_000)
         self.correction_study_runner.shutdown(timeout_ms=10_000)
         self.attenuation_runner.shutdown(timeout_ms=10_000)
+        self.tof_runner.shutdown(timeout_ms=10_000)
         super().closeEvent(event)
 
     def _toggle_detector_labels(self) -> None:

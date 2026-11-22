@@ -112,6 +112,8 @@ def reconstruct_from_endpoints(
     cancel=None,
     job_id: int = 0,
     attenuation=None,
+    tof=None,
+    delta_t_ps=None,
 ) -> ReconstructionResult:
     """Run FBP or MLEM from measured coincidence endpoints.
 
@@ -152,6 +154,52 @@ def reconstruct_from_endpoints(
         from petsim.physics.attenuation import sinogram_survival
 
         survival = sinogram_survival(sino.theta_centers, sino.s_centers, attenuation)
+    if cfg.method == "mlem" and tof is not None and getattr(tof, "active", False):
+        from petsim.physics.tof import time_bin_centers
+        from petsim.reconstruction.tof_mlem import histogram_true_events, tof_mlem_reconstruct
+
+        times = time_bin_centers(tof.n_t, tof.t_max)
+        measured_t = np.asarray(delta_t_ps, dtype=np.float64).reshape(-1)
+        if measured_t.shape[0] != n:
+            raise ValueError("TOF Δt must have one value per true coincidence")
+        tof_y = histogram_true_events(
+            a, b, measured_t, sino.theta_centers, sino.s_centers, times, tof
+        )
+        image, history, cancelled = tof_mlem_reconstruct(
+            tof_y,
+            sino.theta_centers,
+            sino.s_centers,
+            times,
+            tof,
+            n_iterations=cfg.n_iterations,
+            image_size=cfg.image_size,
+            fov=cfg.fov,
+            survival=survival,
+            progress=progress,
+            cancel=cancel,
+        )
+        runtime = time.perf_counter() - started
+        note = "cancelled" if cancelled else "complete"
+        return ReconstructionResult(
+            sinogram=sino,
+            image=image,
+            config=cfg,
+            n_coincidences=n,
+            runtime_s=runtime,
+            history=history,
+            cancelled=cancelled,
+            job_id=job_id,
+            message=(
+                f"TOF-MLEM ({note}) · {image.shape[0]}×{image.shape[1]} · "
+                f"{len(history.iterations)}/{cfg.n_iterations} iterations · "
+                f"{n:,} true coincidences · FWHM {tof.fwhm_ps:g} ps · "
+                f"time bins {times.size}"
+                + (" · attenuation once" if survival is not None else "")
+                + " · randoms excluded · not a clinical TOF matrix"
+                + f" · {runtime:.2f} s"
+            ),
+        )
+
     if cfg.method == "mlem":
         image, history, cancelled = mlem_reconstruct(
             sino,

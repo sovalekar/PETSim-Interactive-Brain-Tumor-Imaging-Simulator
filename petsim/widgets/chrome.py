@@ -58,6 +58,10 @@ It does not use the tumor. Filtered backprojection reweights the parallel-beam
 sinogram. MLEM puts the same weight in the forward model and the sensitivity
 image, not in both places. Absorbed photons are not put back, so the corrected
 image can be noisier.</p>
+<p><b>Time of flight.</b> The arrival-time difference places a true coincidence
+along its measured chord. TOF-MLEM uses that kernel. Random coincidences are
+left out. Filtered backprojection ignores the times. A narrower clock tightens
+the timing estimate. One noisy image is not required to improve every score.</p>
 <p><b>Filtered backprojection.</b> The sinogram is filtered and smeared back
 across the image. The ramp keeps high frequencies. Hann rolls them off.</p>
 <p><b>MLEM.</b> Maximum-likelihood expectation maximization updates a nonnegative

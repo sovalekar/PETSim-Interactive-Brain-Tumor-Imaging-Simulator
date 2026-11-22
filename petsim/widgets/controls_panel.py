@@ -27,6 +27,7 @@ from petsim.widgets.chrome import CollapsibleSection, MetricCard
 from petsim.models.phantom import PhantomState
 from petsim.physics.acquisition import AcquisitionConfig, AcquisitionStats
 from petsim.physics.attenuation import AttenuationConfig
+from petsim.physics.tof import TOFConfig
 
 
 def _slider_row(
@@ -81,6 +82,8 @@ class ControlsPanel(QFrame):
     acquisition_config_changed = Signal(object)  # AcquisitionConfig
     attenuation_changed = Signal(object)  # AttenuationConfig
     attenuation_study_requested = Signal()
+    tof_changed = Signal(object)  # TOFConfig
+    tof_study_requested = Signal()
     start_acquisition = Signal()
     pause_acquisition = Signal()
     reset_acquisition = Signal()
@@ -234,6 +237,33 @@ class ControlsPanel(QFrame):
         atten.content.addWidget(self._atten_study_btn)
         form.addWidget(atten)
 
+        timing = CollapsibleSection("Time of flight", "parameter", expanded=False)
+        self._tof_on = QCheckBox("Record arrival-time differences")
+        self._tof_on.setToolTip(
+            "Records t_A − t_B on true coincidences and enables TOF-MLEM. "
+            "FBP is unchanged. Random coincidences are excluded from TOF-MLEM. "
+            "The centimeter scale is the attenuation control above."
+        )
+        timing.content.addWidget(self._tof_on)
+        self._fwhm = QDoubleSpinBox()
+        self._fwhm.setRange(50.0, 2000.0)
+        self._fwhm.setDecimals(0)
+        self._fwhm.setSingleStep(50.0)
+        self._fwhm.setValue(400.0)
+        self._fwhm.setSuffix(" ps")
+        self._fwhm.setMinimumWidth(0)
+        self._fwhm.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._fwhm.setToolTip("Coincidence timing resolution, full width at half maximum.")
+        timing.content.addWidget(QLabel("Timing FWHM"))
+        timing.content.addWidget(self._fwhm)
+        self._tof_study_btn = QPushButton("Compare TOF")
+        self._tof_study_btn.setToolTip(
+            "One acquisition per seed. Conventional MLEM ignores the times. "
+            "TOF-MLEM uses them. Random coincidences are not included."
+        )
+        timing.content.addWidget(self._tof_study_btn)
+        form.addWidget(timing)
+
         measured = CollapsibleSection("Live statistics", "measured")
         cards = QGridLayout()
         cards.setSpacing(6)
@@ -330,11 +360,16 @@ class ControlsPanel(QFrame):
         self._cm.valueChanged.connect(self._emit_attenuation)
         self._brain_radius.valueChanged.connect(self._emit_attenuation)
         self._atten_study_btn.clicked.connect(self.attenuation_study_requested.emit)
+        self._tof_on.toggled.connect(self._emit_tof)
+        self._fwhm.valueChanged.connect(self._emit_tof)
+        self._cm.valueChanged.connect(self._emit_tof)
+        self._tof_study_btn.clicked.connect(self.tof_study_requested.emit)
 
         self._building = False
         self._emit_phantom_state()
         self._emit_acq_config()
         self._emit_attenuation()
+        self._emit_tof()
         self.update_stats(AcquisitionStats(target_events=5000, detector_efficiency=0.8))
 
     def current_state(self) -> PhantomState:
@@ -370,9 +405,25 @@ class ControlsPanel(QFrame):
             return int(config.seed)
         return 7
 
+    def tof_config(self) -> TOFConfig:
+        return TOFConfig(
+            enabled=self._tof_on.isChecked(),
+            fwhm_ps=float(self._fwhm.value()),
+            cm_per_fov=float(self._cm.value()),
+        )
+
     def set_study_busy(self, busy: bool) -> None:
         self._atten_study_btn.setEnabled(not busy)
         self._atten_study_btn.setText("Comparing…" if busy else "Compare attenuation")
+
+    def set_tof_busy(self, busy: bool) -> None:
+        self._tof_study_btn.setEnabled(not busy)
+        self._tof_study_btn.setText("Comparing…" if busy else "Compare TOF")
+
+    def _emit_tof(self, *_args) -> None:
+        if self._building:
+            return
+        self.tof_changed.emit(self.tof_config())
 
     def _emit_attenuation(self, *_args) -> None:
         if self._building:
